@@ -213,6 +213,12 @@ class Processor {
   DISALLOW_COPY_AND_ASSIGN(Processor);
 };
 
+// The class member sizes Processor's scratch buffers; the namespace constant
+// sizes the half-rate scratch of GranularProcessor. They must not drift apart.
+static_assert(
+    Processor::kMaxBlockSize == kMaxBlockSize,
+    "Processor::kMaxBlockSize and beads::kMaxBlockSize must match");
+
 }  // namespace beads
 
 #endif  // BEADS_DSP_PROCESSOR_H_

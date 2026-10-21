@@ -237,6 +237,13 @@ void TriggerGenerator::Render(
     float exponential_fm,
     TriggerGenerator::Output* out,
     size_t size) {
+  // TBD always renders 32-sample host-rate blocks. Clamp defensively so the
+  // fixed gate-flag scratch buffer below can never overflow.
+  constexpr size_t kMaxTriggerBlockSize = 32;
+  if (size > kMaxTriggerBlockSize) {
+    size = kMaxTriggerBlockSize;
+  }
+
   if (external_input && seed_button_state == SEED_BUTTON_STATE_LOCKED) {
     // We don't make any difference between linear and expo FM when the CV
     // is only selecting a divider: the CV is swinging the knob, end of the
@@ -250,7 +257,7 @@ void TriggerGenerator::Render(
     CONSTRAIN(density, 0.0f, 1.0f);
 
     const float fm = SemitonesToRatio(exponential_fm * 60.0f);
-    stmlib::GateFlags merged_gate_flags[size];
+    stmlib::GateFlags merged_gate_flags[kMaxTriggerBlockSize];
     
     // Merge seed button and external gate input to get a single gate stream.
     for (size_t i = 0; i < size; ++i) {

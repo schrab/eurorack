@@ -96,8 +96,15 @@ void Processor::Configure(Media media, bool mono) {
   
   pre_reverb_limiter_.Init(1.0f / (host_sample_rate_ * 4.0f), 0.9f);
   output_limiter_.Init(1.0f / (host_sample_rate_ * 6.0f), 0.9f);
-  trigger_generator_.Init(sample_rate());
-  delay_controller_.Init(sample_rate(), max_delay * (mono ? 2 : 1));
+
+  // The trigger generator and the delay controller are stepped once per host
+  // sample: Process() renders them over the full 32-sample block, and the
+  // half-rate path in GranularProcessor downsamples their output (triggers are
+  // preserved across the ratio group, tap delays are divided by ratio). They
+  // must therefore be initialized with the host sample rate, not the engine
+  // rate, or their clock constants and LFO increments run at the wrong speed.
+  trigger_generator_.Init(host_sample_rate_);
+  delay_controller_.Init(host_sample_rate_, max_delay * (mono ? 2 : 1));
   reverb_.Reset(host_sample_rate_);
 }
 
