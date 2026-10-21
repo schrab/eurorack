@@ -81,9 +81,16 @@ class GranularProcessor {
     input_limiter_.Init(1.0f / sample_rate, 0.95f);
   }
   
-  inline void Reset() {
-    mono_delay_line_.Reset();
-    stereo_delay_line_.Reset();
+  // Resets the delay line of the active channel layout only. Both layouts
+  // interpret the same 768KB of buffers (with a different item format), so
+  // clearing the inactive one as well only doubles the clear to 1.5MB without
+  // leaving different bytes behind.
+  inline void Reset(bool mono) {
+    if (mono) {
+      mono_delay_line_.Reset();
+    } else {
+      stereo_delay_line_.Reset();
+    }
     granular_player_.Reset();
     multitap_delay_.Reset();
   }

@@ -75,21 +75,24 @@ void Processor::Configure(Media media, bool mono) {
   
   int max_delay = 0;
 
+  // Clearing the delay line is the expensive part of a media switch: 768KB of
+  // PSRAM. Only the delay line of the active channel layout is cleared, and
+  // both layouts share the same buffers, so a single pass is enough.
   switch (media_) {
     case MEDIA_DIGITAL:
-      processor_digital_.Reset();
+      processor_digital_.Reset(mono);
       max_delay = processor_digital_.max_delay_times_ratio();
       break;
     case MEDIA_VINTAGE_DIGITAL:
-      processor_vintage_digital_.Reset();
+      processor_vintage_digital_.Reset(mono);
       max_delay = processor_vintage_digital_.max_delay_times_ratio();
       break;
     case MEDIA_CLEAN_TAPE:
-      processor_clean_tape_.Reset();
+      processor_clean_tape_.Reset(mono);
       max_delay = processor_clean_tape_.max_delay_times_ratio();
       break;
     case MEDIA_DIRTY_TAPE:
-      processor_dirty_tape_.Reset();
+      processor_dirty_tape_.Reset(mono);
       max_delay = processor_dirty_tape_.max_delay_times_ratio();
       break;
   }
