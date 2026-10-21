@@ -41,6 +41,11 @@
 
 namespace beads {
 
+// Maximum number of samples per Process() call. TBD always uses 32 (the audio
+// callback block size). Used to size the scratch buffers of the half-rate path
+// as fixed-size arrays instead of VLAs.
+constexpr size_t kMaxBlockSize = 32;
+
 template<Resolution resolution, int max_delay, int ratio>
 class GranularProcessor {
  public:
@@ -157,19 +162,22 @@ class GranularProcessor {
       const FloatFrame* in,
       FloatFrame* out,
       size_t size) {
+    if (size > kMaxBlockSize) {
+      size = kMaxBlockSize;
+    }
     if (ratio == 1) {
       ProcessInternal(
           triggers, taps, freeze, parameters, feedback, mono, in, out, size);
     } else {
       size_t d_size = size / size_t(ratio);
 
-      bool d_freeze[d_size];
-      TriggerGenerator::Output d_triggers[d_size];
-      DelayController::Output d_taps[d_size];
-      FloatFrame d_in[d_size];
-      FloatFrame d_out[d_size];
-      float downsampled[d_size];
-      float upsampled[size];
+      bool d_freeze[kMaxBlockSize / 2];
+      TriggerGenerator::Output d_triggers[kMaxBlockSize / 2];
+      DelayController::Output d_taps[kMaxBlockSize / 2];
+      FloatFrame d_in[kMaxBlockSize / 2];
+      FloatFrame d_out[kMaxBlockSize / 2];
+      float downsampled[kMaxBlockSize / 2];
+      float upsampled[kMaxBlockSize];
 
       DownsampleGate(freeze, d_freeze, size);
       

@@ -36,18 +36,17 @@
 #include "beads/dsp/fx/reverb.h"
 #include "beads/dsp/fx/wow_and_flutter.h"
 
-// Setting this flag slows down the codec to 24kHz for the MEDIA_DIRTY_TAPE
-// setting. The codec becomes very hissy at this sample rate, but this has
-// a certain charm!
-// 
-// When this flag is not set, the codec is run at 48kHz and the wet signal is
-// downsampled by a 0.5 factor before being processed. Low-pass filtering
-// is also applied to the output signal within the wow and flutter code.
-#define ENABLE_HARDWARE_24K
+// The codec runs at a fixed host sample rate (44.1kHz on TBD). The wet signal
+// is downsampled by a 0.5 factor for the half-rate media (vintage digital and
+// both tape modes) and low-pass filtering is applied to the output signal
+// within the wow and flutter code. The reverb, the limiters and the wow and
+// flutter simulation always run at the host sample rate.
 
 namespace beads {
 
 // (512 + 256) * 1000 bytes, 48kHz 16-bit stereo = 4 seconds
+// (4.35 seconds at 44.1kHz; time and pitch are relative so this only makes the
+// buffer slightly longer than on the original hardware.)
 const size_t kDelayBufferSizeBits = 768 * 1000 * 8;
 
 class Processor {
@@ -68,28 +67,32 @@ class Processor {
     float reverb_amount;
     bool output_gate;
   };
+
+  // TBD always processes 32-sample blocks. All scratch buffers used by Process
+  // are fixed-size members so that the audio task stack (4KB) is not used for
+  // them. Must match beads::kMaxBlockSize (granular_processor.h).
+  static constexpr size_t kMaxBlockSize = 32;
   
-  void Init(uint8_t* buffers[], uint16_t* reverb_buffer);
+  void Init(
+      uint8_t* buffers[],
+      uint16_t* reverb_buffer,
+      float host_sample_rate);
   void Configure(Media media, bool mono);
   
   inline Media media() const { return media_; }
   inline bool mono() const { return mono_; }
   
+  // Sample rate at which the granular/delay engine runs. Half of the host
+  // sample rate for every media except MEDIA_DIGITAL.
   inline float sample_rate() const {
-#ifdef ENABLE_HARDWARE_24K
-    float sr[4] = { 24000.0f, 48000.0f, 32000.0f, 48000.0f };
-#else
-    float sr[4] = { 48000.0f, 48000.0f, 32000.0f, 48000.0f };
-#endif  // ENABLE_HARDWARE_24K
-    return sr[media_];
+    return media_ == MEDIA_DIGITAL
+        ? host_sample_rate_
+        : host_sample_rate_ * 0.5f;
   }
   
+  // Ratio between the host sample rate and the engine sample rate.
   inline int ratio() const {
-#ifdef ENABLE_HARDWARE_24K
-    int ratio[4] = { 1, 2, 1, 1 };
-#else
-    int ratio[4] = { 2, 2, 1, 1 };
-#endif  // ENABLE_HARDWARE_24K
+    const int ratio[4] = { 2, 2, 2, 1 };
     return ratio[media_];
   }
   
@@ -115,7 +118,9 @@ class Processor {
   
   inline float overwrite_reserve() const {
     float reserve = float(remaining());
-    float fade_duration = sample_rate() * 0.15f / float(ratio());
+    // Sample rate is the engine rate, and remaining() is expressed in engine
+    // samples, so the fade duration is 0.15s of engine time.
+    float fade_duration = sample_rate() * 0.15f;
     return reserve >= fade_duration ? 1.0f : reserve / fade_duration;
   }
   
@@ -171,22 +176,15 @@ class Processor {
   GranularProcessor<
       RESOLUTION_12_BIT,
       kDelayBufferSizeBits / (12 * 2),
-      1> processor_vintage_digital_;
+      2> processor_vintage_digital_;
   GranularProcessor<
       RESOLUTION_12_BIT,
       kDelayBufferSizeBits / (12 * 2),
       2> processor_clean_tape_;
-#ifdef ENABLE_HARDWARE_24K
-  GranularProcessor<
-      RESOLUTION_8_BIT,
-      kDelayBufferSizeBits / (8 * 2),
-      1> processor_dirty_tape_;
-#else
   GranularProcessor<
       RESOLUTION_8_BIT,
       kDelayBufferSizeBits / (8 * 2),
       2> processor_dirty_tape_;
-#endif  // ENABLE_HARDWARE_24K
 
   TriggerGenerator trigger_generator_;
   DelayController delay_controller_;
@@ -195,6 +193,7 @@ class Processor {
   bool process_dry_;
   bool mono_;
   
+  float host_sample_rate_;
   float delay_mode_transition_;
 
   float dry_;
@@ -204,6 +203,12 @@ class Processor {
   Reverb reverb_;
   Limiter pre_reverb_limiter_;
   Limiter output_limiter_;
+  
+  // Fixed block scratch, previously stack-allocated VLAs.
+  TriggerGenerator::Output triggers_buffer_[kMaxBlockSize];
+  DelayController::Output taps_buffer_[kMaxBlockSize];
+  bool gate_out_[kMaxBlockSize];
+  FloatFrame dry_signal_[kMaxBlockSize];
   
   DISALLOW_COPY_AND_ASSIGN(Processor);
 };

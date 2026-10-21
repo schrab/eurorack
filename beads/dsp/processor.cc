@@ -42,23 +42,26 @@ using namespace stmlib;
 
 void Processor::Init(
     uint8_t* buffers[],
-    uint16_t* reverb_buffer) {
-  processor_digital_.Init(48000.0f, buffers);
-  processor_vintage_digital_.Init(32000.0f, buffers);
-  processor_clean_tape_.Init(24000.0f, buffers);
-  processor_dirty_tape_.Init(24000.0f, buffers);
+    uint16_t* reverb_buffer,
+    float host_sample_rate) {
+  host_sample_rate_ = host_sample_rate;
+
+  // Media-specific engine rates. All the half-rate media run the granular
+  // engine at half the host sample rate and upsample/downsample around it.
+  processor_digital_.Init(host_sample_rate, buffers);
+  processor_vintage_digital_.Init(host_sample_rate * 0.5f, buffers);
+  processor_clean_tape_.Init(host_sample_rate * 0.5f, buffers);
+  processor_dirty_tape_.Init(host_sample_rate * 0.5f, buffers);
   
   dry_ = 0.0f;
   wet_ = 0.0f;
   
-  reverb_.Init(reverb_buffer, 48000.0f);
-#ifdef ENABLE_HARDWARE_24K
-  wow_and_flutter_.Init(24000.0f);
+  // Reverb and limiters always run at the host sample rate.
+  reverb_.Init(reverb_buffer, host_sample_rate);
+
+  // Wow and flutter is applied to the host-rate output of the dirty tape mode.
+  wow_and_flutter_.Init(host_sample_rate);
   wow_and_flutter_.set_lp(0.95f);
-#else
-  wow_and_flutter_.Init(48000.0f);
-  wow_and_flutter_.set_lp(0.6f);
-#endif  // ENABLE_HARDWARE_24K
 
   Configure(MEDIA_DIGITAL, false);
   
@@ -91,12 +94,11 @@ void Processor::Configure(Media media, bool mono) {
       break;
   }
   
-  float sr = sample_rate();
-  pre_reverb_limiter_.Init(1.0f / (sr * 4.0f), 0.9f);
-  output_limiter_.Init(1.0f / (sr * 6.0f), 0.9f);
-  trigger_generator_.Init(sr);
-  delay_controller_.Init(sr, max_delay * (mono ? 2 : 1));
-  reverb_.Reset(sr);
+  pre_reverb_limiter_.Init(1.0f / (host_sample_rate_ * 4.0f), 0.9f);
+  output_limiter_.Init(1.0f / (host_sample_rate_ * 6.0f), 0.9f);
+  trigger_generator_.Init(sample_rate());
+  delay_controller_.Init(sample_rate(), max_delay * (mono ? 2 : 1));
+  reverb_.Reset(host_sample_rate_);
 }
 
 void Processor::Process(
@@ -109,10 +111,15 @@ void Processor::Process(
     const FloatFrame* in,
     FloatFrame* out,
     size_t size) {
+  // TBD always passes 32 samples; never overflow the fixed scratch buffers.
+  if (size > kMaxBlockSize) {
+    size = kMaxBlockSize;
+  }
+
   const float delay_mode = delay_mode_transition_ > 0.0f;
   const float threshold = delay_mode ? 0.98f : 0.99f;
   const float direction = parameters.size.base > threshold ? 1.0f : -1.0f;
-  delay_mode_transition_ += direction * float(size) / sample_rate();
+  delay_mode_transition_ += direction * float(size) / host_sample_rate_;
   
   CONSTRAIN(delay_mode_transition_,
             -kDelayModeTransitionTime,
@@ -121,12 +128,8 @@ void Processor::Process(
   float expo_fm_amount = 20.0f * (fabsf(density.base - 0.5f) - 0.225f);
   CONSTRAIN(expo_fm_amount, 0.0f, 1.0f);
 
-  TriggerGenerator::Output triggers_buffer[size];
-  DelayController::Output taps_buffer[size];
-  bool gate_out[size];
-
-  TriggerGenerator::Output* triggers = &triggers_buffer[0];
-  DelayController::Output* taps = &taps_buffer[0];
+  TriggerGenerator::Output* triggers = &triggers_buffer_[0];
+  DelayController::Output* taps = &taps_buffer_[0];
   
   // Extract grain triggers.
   if (delay_mode) {
@@ -143,7 +146,7 @@ void Processor::Process(
         taps,
         size);
     for (size_t i = 0; i < size; ++i) {
-      gate_out[i] = taps[i].gate;
+      gate_out_[i] = taps[i].gate;
     }
   } else {
     taps = NULL;
@@ -156,49 +159,64 @@ void Processor::Process(
         triggers,
         size);
     for (size_t i = 0; i < size; ++i) {
-      gate_out[i] = triggers[i].gate;
+      gate_out_[i] = triggers[i].gate;
     }
   }
   
-  FloatFrame dry_signal[size];
-  
+  // Compute the dry signal *before* the wet processor runs, so that Process()
+  // is safe even if a caller passes in == out.
+  switch (media_) {
+    case MEDIA_DIGITAL:
+    case MEDIA_CLEAN_TAPE:
+      for (size_t i = 0; i < size; ++i) {
+        dry_signal_[i] = in[i];
+      }
+      break;
+    
+    case MEDIA_VINTAGE_DIGITAL:
+      for (size_t i = 0; i < size; ++i) {
+        dry_signal_[i].l =
+            static_cast<int32_t>(in[i].l * 4096.0f) / 4096.0f;
+        dry_signal_[i].r =
+            static_cast<int32_t>(in[i].r * 4096.0f) / 4096.0f;
+      }
+      break;
+    
+    case MEDIA_DIRTY_TAPE:
+      for (size_t i = 0; i < size; ++i) {
+        dry_signal_[i].l = MuLaw2Lin(
+            Lin2MuLaw(
+                stmlib::Clip16(static_cast<int32_t>(in[i].l * 32768.0f))));
+        dry_signal_[i].r = MuLaw2Lin(
+            Lin2MuLaw(
+                stmlib::Clip16(static_cast<int32_t>(in[i].r * 32768.0f))));
+      }
+      break;
+  }
+
   // Granular processing.
   const float feedback = mix_parameters.feedback;
   switch (media_) {
     case MEDIA_DIGITAL:
       processor_digital_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out, size);
-      copy(&in[0], &in[size], &dry_signal[0]);
       break;
     
     case MEDIA_VINTAGE_DIGITAL:
       processor_vintage_digital_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out, size);
-      for (size_t i = 0; i < size; ++i) {
-        dry_signal[i].l = static_cast<int32_t>(in[i].l * 4096.0f) / 4096.0f;
-        dry_signal[i].r = static_cast<int32_t>(in[i].r * 4096.0f) / 4096.0f;
-      }
       break;
     
     case MEDIA_CLEAN_TAPE:
       processor_clean_tape_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out,
           size);
-      copy(&in[0], &in[size], &dry_signal[0]);
       break;
     
     case MEDIA_DIRTY_TAPE:
       processor_dirty_tape_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out,
           size);
-      for (size_t i = 0; i < size; ++i) {
-        dry_signal[i].l = MuLaw2Lin(
-            Lin2MuLaw(
-                stmlib::Clip16(static_cast<int32_t>(in[i].l * 32768.0f))));
-        dry_signal[i].r = MuLaw2Lin(
-            Lin2MuLaw(
-                stmlib::Clip16(static_cast<int32_t>(in[i].r * 32768.0f))));
-      }
       break;
   }
   
@@ -218,7 +236,7 @@ void Processor::Process(
   stmlib::ParameterInterpolator wet_modulation(&wet_, wet, size);
 
   for (size_t i = 0; i < size; ++i) {
-    out[i] = dry_modulation.Next() * dry_signal[i] + \
+    out[i] = dry_modulation.Next() * dry_signal_[i] + \
         wet_modulation.Next() * out[i];
   }
   
@@ -248,7 +266,7 @@ void Processor::Process(
   if (mix_parameters.output_gate) {
     for (size_t i = 0; i < size; ++i) {
       out[i].l = (out[i].l + out[i].r) * 0.5f;
-      out[i].r = gate_out[i] ? -0.8f : 0.0f;
+      out[i].r = gate_out_[i] ? -0.8f : 0.0f;
     }
   }
 }
