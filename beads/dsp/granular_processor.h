@@ -46,6 +46,19 @@ namespace beads {
 // as fixed-size arrays instead of VLAs.
 constexpr size_t kMaxBlockSize = 32;
 
+// Scratch storage for the half-rate path. It lives in the Processor object
+// (PSRAM) instead of the audio-task stack: the Vintage/tape paths previously
+// used ~1.8KB of stack here, leaving only 20 bytes of the 4KB audio stack free.
+struct HalfRateScratch {
+  bool freeze[kMaxBlockSize / 2];
+  TriggerGenerator::Output triggers[kMaxBlockSize / 2];
+  DelayController::Output taps[kMaxBlockSize / 2];
+  FloatFrame in[kMaxBlockSize / 2];
+  FloatFrame out[kMaxBlockSize / 2];
+  float downsampled[kMaxBlockSize / 2];
+  float upsampled[kMaxBlockSize];
+};
+
 template<Resolution resolution, int max_delay, int ratio>
 class GranularProcessor {
  public:
@@ -118,6 +131,14 @@ class GranularProcessor {
         ? mono_delay_line_.remaining()
         : stereo_delay_line_.remaining();
   }
+
+  inline void SetMaxActiveGrains(int n) {
+    granular_player_.SetMaxActiveGrains(n);
+  }
+
+  inline int ActiveGrains() const {
+    return granular_player_.CountActiveGrains();
+  }
   
   inline uint8_t* delay_buffer_raw_bytes(bool mono, size_t offset) {
     // Independently of the stereo/mono setting, we're writing in the same
@@ -168,7 +189,8 @@ class GranularProcessor {
       const bool mono,
       const FloatFrame* in,
       FloatFrame* out,
-      size_t size) {
+      size_t size,
+      HalfRateScratch* scratch = nullptr) {
     if (size > kMaxBlockSize) {
       size = kMaxBlockSize;
     }
@@ -177,48 +199,41 @@ class GranularProcessor {
           triggers, taps, freeze, parameters, feedback, mono, in, out, size);
     } else {
       size_t d_size = size / size_t(ratio);
+      HalfRateScratch& s = *scratch;
 
-      bool d_freeze[kMaxBlockSize / 2];
-      TriggerGenerator::Output d_triggers[kMaxBlockSize / 2];
-      DelayController::Output d_taps[kMaxBlockSize / 2];
-      FloatFrame d_in[kMaxBlockSize / 2];
-      FloatFrame d_out[kMaxBlockSize / 2];
-      float downsampled[kMaxBlockSize / 2];
-      float upsampled[kMaxBlockSize];
-
-      DownsampleGate(freeze, d_freeze, size);
+      DownsampleGate(freeze, s.freeze, size);
       
       if (triggers) {
-        DownsampleTriggers(triggers, d_triggers, size);
+        DownsampleTriggers(triggers, s.triggers, size);
       }
       if (taps) {
-        DownsampleTaps(taps, d_taps, size);
+        DownsampleTaps(taps, s.taps, size);
       }
       
       for (size_t channel = 0; channel < 2; ++channel) {
         for (size_t i = 0; i < size; ++i) {
-          upsampled[i] = *(&(in[i].l) + channel);
+          s.upsampled[i] = *(&(in[i].l) + channel);
         }
-        src_down_[channel].Process(upsampled, downsampled, size);
+        src_down_[channel].Process(s.upsampled, s.downsampled, size);
         for (size_t i = 0; i < d_size; ++i) {
-          *(&(d_in[i].l) + channel) = downsampled[i];
+          *(&(s.in[i].l) + channel) = s.downsampled[i];
         }
       }
 
       ProcessInternal(
-          triggers ? d_triggers : NULL,
-          taps ? d_taps : NULL,
-          d_freeze,
+          triggers ? s.triggers : NULL,
+          taps ? s.taps : NULL,
+          s.freeze,
           parameters, feedback,
-          mono, d_in, d_out, d_size);
+          mono, s.in, s.out, d_size);
       
       for (size_t channel = 0; channel < 2; ++channel) {
         for (size_t i = 0; i < d_size; ++i) {
-          downsampled[i] = *(&(d_out[i].l) + channel);
+          s.downsampled[i] = *(&(s.out[i].l) + channel);
         }
-        src_up_[channel].Process(downsampled, upsampled, d_size);
+        src_up_[channel].Process(s.downsampled, s.upsampled, d_size);
         for (size_t i = 0; i < size; ++i) {
-          *(&(out[i].l) + channel) = upsampled[i];
+          *(&(out[i].l) + channel) = s.upsampled[i];
         }
       }
     }
@@ -306,6 +321,10 @@ class GranularProcessor {
 
     const float lp_coefficient = lp_coefficients[resolution];
     const float soft_limit_gain = soft_limit_gains[resolution];
+
+    // Drop completed grains from the per-sample render list once per block.
+    // Grains started by a trigger inside the loop refresh the list themselves.
+    granular_player_.BeginBlock();
     
     while (size--) {
       const float feedback = feedback_modulation.Next();

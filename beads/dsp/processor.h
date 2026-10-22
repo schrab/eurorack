@@ -72,12 +72,34 @@ class Processor {
   // are fixed-size members so that the audio task stack (4KB) is not used for
   // them. Must match beads::kMaxBlockSize (granular_processor.h).
   static constexpr size_t kMaxBlockSize = 32;
+  // Reverb send mix (reverb^2 * 0.9) below this is inaudible; the network is
+  // bypassed to reclaim its substantial CPU cost.
+  static constexpr float kReverbActiveThreshold = 0.0001f;
   
   void Init(
       uint8_t* buffers[],
       uint16_t* reverb_buffer,
       float host_sample_rate);
   void Configure(Media media, bool mono);
+  void SetMaxActiveGrains(int n);
+  // Number of grains currently rendering. Host-test and bring-up aid.
+  inline int ActiveGrains() const {
+    switch (media_) {
+      case MEDIA_DIRTY_TAPE:
+        return processor_dirty_tape_.ActiveGrains();
+      case MEDIA_CLEAN_TAPE:
+        return processor_clean_tape_.ActiveGrains();
+      case MEDIA_VINTAGE_DIGITAL:
+        return processor_vintage_digital_.ActiveGrains();
+      case MEDIA_DIGITAL:
+      default:
+        return processor_digital_.ActiveGrains();
+    }
+  }
+  // Delay mode (the 8-tap pitch-shifting multitap delay) is disabled in the
+  // v1 plugin because it exceeds the TBD audio-task budget. The DSP core keeps
+  // the implementation for tests and future optimization.
+  void SetDelayModeEnabled(bool enabled);
   
   inline Media media() const { return media_; }
   inline bool mono() const { return mono_; }
@@ -192,6 +214,11 @@ class Processor {
   Media media_;
   bool process_dry_;
   bool mono_;
+  // True while the reverb network is being processed. When the mix is zero
+  // the network is skipped; the flag makes the first enable clear stale tail
+  // audio instead of resuming a frozen reverb from minutes ago.
+  bool reverb_active_;
+  bool delay_mode_enabled_;
   
   float host_sample_rate_;
   float delay_mode_transition_;
@@ -209,6 +236,8 @@ class Processor {
   DelayController::Output taps_buffer_[kMaxBlockSize];
   bool gate_out_[kMaxBlockSize];
   FloatFrame dry_signal_[kMaxBlockSize];
+  // Half-rate path scratch, shared by the Vintage/tape engines.
+  HalfRateScratch half_rate_scratch_;
   
   DISALLOW_COPY_AND_ASSIGN(Processor);
 };

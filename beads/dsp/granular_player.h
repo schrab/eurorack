@@ -72,6 +72,7 @@ class GranularPlayer {
     max_grain_duration_ = sample_rate * 4.0f;
     sample_rate_ = sample_rate;
     one_hertz_ = 1.0f / sample_rate;
+    max_active_grains_ = num_grains;
     Reset();
   }
   
@@ -80,6 +81,44 @@ class GranularPlayer {
       grain_[i].Init(sample_rate_);
       grain_priority_list_[i] = &grain_[i];
     }
+    num_active_grains_ = 0;
+  }
+
+  // Refresh the compact list of grains that still have audio to render.
+  // Called once per block, and after a new grain is started (a trigger can
+  // recycle a completed grain that was not in the previous list). Rendering
+  // from this list avoids calling Render() on all 32 slots for every sample.
+  inline void RebuildActiveGrains() {
+    num_active_grains_ = 0;
+    for (int i = 0; i < num_grains; ++i) {
+      if (!grain_[i].done()) {
+        active_grains_[num_active_grains_++] = &grain_[i];
+      }
+    }
+  }
+
+  inline void BeginBlock() {
+    RebuildActiveGrains();
+  }
+
+  // Cap the number of grains that may render concurrently. Triggers that
+  // arrive while the cap is reached are dropped; existing grains are allowed
+  // to finish. Lowering the cap fades the excess grains out quickly instead of
+  // waiting for their full duration.
+  inline void SetMaxActiveGrains(int n) {
+    if (n < 1) n = 1;
+    if (n > num_grains) n = num_grains;
+    if (n < max_active_grains_) {
+      int to_fade = CountActiveGrains() - n;
+      for (int i = 0; i < num_grains && to_fade > 0; ++i) {
+        T* grain = grain_priority_list_[i];
+        if (!grain->done()) {
+          grain->FadeOut(instant_crossfade_time_);
+          --to_fade;
+        }
+      }
+    }
+    max_active_grains_ = n;
   }
   
   inline float ComputeSpread(
@@ -204,6 +243,9 @@ class GranularPlayer {
  protected:
   T grain_[num_grains];
   T* grain_priority_list_[num_grains];
+  T* active_grains_[num_grains];
+  int num_active_grains_;
+  int max_active_grains_;
  
   int preemptive_crossfade_time_;
   int instant_crossfade_time_;

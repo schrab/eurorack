@@ -55,6 +55,8 @@ void Processor::Init(
   
   dry_ = 0.0f;
   wet_ = 0.0f;
+  reverb_active_ = false;
+  delay_mode_enabled_ = false;
   
   // Reverb and limiters always run at the host sample rate.
   reverb_.Init(reverb_buffer, host_sample_rate);
@@ -111,6 +113,23 @@ void Processor::Configure(Media media, bool mono) {
   reverb_.Reset(host_sample_rate_);
 }
 
+void Processor::SetMaxActiveGrains(int n) {
+  // Apply to every media engine so the limit survives a media switch.
+  processor_digital_.SetMaxActiveGrains(n);
+  processor_vintage_digital_.SetMaxActiveGrains(n);
+  processor_clean_tape_.SetMaxActiveGrains(n);
+  processor_dirty_tape_.SetMaxActiveGrains(n);
+}
+
+void Processor::SetDelayModeEnabled(bool enabled) {
+  delay_mode_enabled_ = enabled;
+  if (!enabled) {
+    // Keep the granular wet path fully faded in. The transition is driven by
+    // Process() only while delay mode is enabled.
+    delay_mode_transition_ = -kDelayModeTransitionTime;
+  }
+}
+
 void Processor::Process(
     SeedButtonState seed_button_state,
     const stmlib::GateFlags* seed_input,
@@ -126,14 +145,20 @@ void Processor::Process(
     size = kMaxBlockSize;
   }
 
-  const float delay_mode = delay_mode_transition_ > 0.0f;
-  const float threshold = delay_mode ? 0.98f : 0.99f;
-  const float direction = parameters.size.base > threshold ? 1.0f : -1.0f;
-  delay_mode_transition_ += direction * float(size) / host_sample_rate_;
-  
-  CONSTRAIN(delay_mode_transition_,
-            -kDelayModeTransitionTime,
-            +kDelayModeTransitionTime);
+  const bool delay_mode = delay_mode_enabled_ &&
+      (delay_mode_transition_ > 0.0f);
+  if (delay_mode_enabled_) {
+    const float threshold = delay_mode ? 0.98f : 0.99f;
+    const float direction = parameters.size.base > threshold ? 1.0f : -1.0f;
+    delay_mode_transition_ += direction * float(size) / host_sample_rate_;
+    CONSTRAIN(delay_mode_transition_,
+              -kDelayModeTransitionTime,
+              +kDelayModeTransitionTime);
+  } else {
+    // v1 runs the granular engine across the entire Size range. Keep the wet
+    // path fully faded in; no multitap delay is rendered.
+    delay_mode_transition_ = -kDelayModeTransitionTime;
+  }
   
   float expo_fm_amount = 20.0f * (fabsf(density.base - 0.5f) - 0.225f);
   CONSTRAIN(expo_fm_amount, 0.0f, 1.0f);
@@ -209,24 +234,26 @@ void Processor::Process(
   switch (media_) {
     case MEDIA_DIGITAL:
       processor_digital_.Process(
-          triggers, taps, freeze, parameters, feedback, mono_, in, out, size);
+          triggers, taps, freeze, parameters, feedback, mono_, in, out, size,
+          &half_rate_scratch_);
       break;
     
     case MEDIA_VINTAGE_DIGITAL:
       processor_vintage_digital_.Process(
-          triggers, taps, freeze, parameters, feedback, mono_, in, out, size);
+          triggers, taps, freeze, parameters, feedback, mono_, in, out, size,
+          &half_rate_scratch_);
       break;
     
     case MEDIA_CLEAN_TAPE:
       processor_clean_tape_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out,
-          size);
+          size, &half_rate_scratch_);
       break;
     
     case MEDIA_DIRTY_TAPE:
       processor_dirty_tape_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out,
-          size);
+          size, &half_rate_scratch_);
       break;
   }
   
@@ -268,7 +295,17 @@ void Processor::Process(
       : (0.3f + 0.6f * reverb_time));
   reverb_.set_lp(
       caveman ? 0.4f : (media_ == MEDIA_VINTAGE_DIGITAL ? 0.75f : 0.6f));
-  reverb_.Process(out, size);
+  if (reverb_mix > kReverbActiveThreshold) {
+    if (!reverb_active_) {
+      // The network was skipped while muted; drop the frozen tail so that
+      // raising the reverb does not replay audio from before the mute.
+      reverb_.Clear();
+      reverb_active_ = true;
+    }
+    reverb_.Process(out, size);
+  } else {
+    reverb_active_ = false;
+  }
   
   // Final clipping/limiting
   output_limiter_.Process(out, size);

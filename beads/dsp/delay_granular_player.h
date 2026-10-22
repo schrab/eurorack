@@ -47,7 +47,7 @@ class DelayGranularPlayer : public GranularPlayer<DelayGrain, 32> {
       const TriggerGenerator::Output& trigger,
       const Parameters& p,
       FloatFrame* out) {
-    if (trigger.trigger) {
+    if (trigger.trigger && CountActiveGrains() < max_active_grains_) {
       const float duration = p.size.value();
       const bool reverse = duration < 0.3333333f;
 
@@ -66,10 +66,14 @@ class DelayGranularPlayer : public GranularPlayer<DelayGrain, 32> {
           amplitude, pan,
           trigger.fractional_sample);
       SortGrainList(p.monophonic_mode);
+      // Start() may recycle a completed slot that was not in the compact
+      // render list; refresh it before rendering this sample.
+      RebuildActiveGrains();
     }
 
-    for (int i = 0; i < NUM_GRAINS; ++i) {
-      grain_[i].Render<HEAD_CROSSING_POLICY_STOP, true>(delay_line, out);
+    for (int i = 0; i < num_active_grains_; ++i) {
+      active_grains_[i]->Render<HEAD_CROSSING_POLICY_STOP, true>(
+          delay_line, out);
     }
 
     Tick();  // Required to estimate the timing between grains.
