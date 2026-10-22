@@ -105,8 +105,12 @@ class GranularPlayer {
   // arrive while the cap is reached are dropped; existing grains are allowed
   // to finish. Lowering the cap fades the excess grains out quickly instead of
   // waiting for their full duration.
+  //
+  // TEMPORARY CPU-SPIKE CHANGE: a cap of 0 is accepted so the fixed engine
+  // cost can be measured with no grains rendering. Production callers only
+  // pass 2 or 4. Revert to `if (n < 1) n = 1;` after the grain-budget spike.
   inline void SetMaxActiveGrains(int n) {
-    if (n < 1) n = 1;
+    if (n < 0) n = 0;
     if (n > num_grains) n = num_grains;
     if (n < max_active_grains_) {
       int to_fade = CountActiveGrains() - n;
