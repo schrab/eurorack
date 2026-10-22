@@ -81,6 +81,15 @@ class Part {
 
   inline ResonatorModel resonator_model() const { return resonator_model_; }
   inline void set_resonator_model(ResonatorModel r) { resonator_model_ = r; }
+
+  // Number of modal resonator bands per voice (default 52). Used by the
+  // second-core helper (52) and the single-core fallback (12).
+  inline void set_resolution(size_t resolution) {
+    for (size_t i = 0; i < kNumVoices; ++i) {
+      voice_[i].set_resolution(resolution);
+    }
+  }
+  inline size_t resolution() const { return voice_[0].resolution(); }
   
  private:
   Patch patch_;

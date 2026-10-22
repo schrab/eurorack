@@ -55,7 +55,7 @@ enum ResonatorModel {
 
 class Voice {
  public:
-  Voice() { }
+  Voice() : resolution_(52) { }
   ~Voice() { }
   
   void Init();
@@ -78,6 +78,13 @@ class Voice {
   void set_resonator_model(ResonatorModel resonator_model) {
     resonator_model_ = resonator_model;
   }
+  // Number of modal resonator bands. Persisted so that a Panic()/reset does not
+  // silently undo a reduced-resolution fallback.
+  inline void set_resolution(size_t resolution) {
+    resolution_ = resolution;
+    resonator_.set_resolution(resolution_);
+  }
+  inline size_t resolution() const { return resolution_; }
   
  private:
   void ResetResonator();
@@ -121,6 +128,7 @@ class Voice {
   bool previous_gate_;
   
   ResonatorModel resonator_model_;
+  size_t resolution_;
   float chord_index_;
   
   DISALLOW_COPY_AND_ASSIGN(Voice);

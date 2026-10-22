@@ -70,7 +70,9 @@ void Voice::ResetResonator() {
     string_[i].Init(true);
   }
   dc_blocker_.Init(1.0f - 10.0f / kSampleRate);
-  resonator_.set_resolution(12);  // test: original stable count
+  // Runs with 56 extremely tightly; the resolution is a runtime knob so the
+  // single-core fallback can drop to 12 modes without a re-init losing it.
+  resonator_.set_resolution(resolution_);
 }
 
 float chords[11][5] = {
