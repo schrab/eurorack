@@ -330,11 +330,12 @@ class DelayLine {
   }
   
   template<Interpolation interpolation>
-  inline FloatFrame Read(int delay_integral, float delay_fractional) const {
+  inline FloatFrame ReadFrom(
+      int write_ptr, int delay_integral, float delay_fractional) const {
     if (interpolation == INTERPOLATION_HERMITE) {
       delay_integral += max_delay - 1; // Fix latency.
     }
-    int i = (write_ptr_ + delay_integral) % max_delay;
+    int i = (write_ptr + delay_integral) % max_delay;
     
     FloatFrame value;
     
@@ -357,6 +358,12 @@ class DelayLine {
       value = (((a * t) - b_neg) * t + c) * delay_fractional + x[1];
     }
     return value;
+  }
+
+  template<Interpolation interpolation>
+  inline FloatFrame Read(int delay_integral, float delay_fractional) const {
+    return ReadFrom<interpolation>(
+        write_ptr_, delay_integral, delay_fractional);
   }
   
   template<Interpolation interpolation>

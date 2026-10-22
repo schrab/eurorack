@@ -46,7 +46,8 @@ class DelayGranularPlayer : public GranularPlayer<DelayGrain, 32> {
       const DelayLineType* delay_line,
       const TriggerGenerator::Output& trigger,
       const Parameters& p,
-      FloatFrame* out) {
+      FloatFrame* out,
+      int write_ptr = -1) {
     if (trigger.trigger && CountActiveGrains() < max_active_grains_) {
       const float duration = p.size.value();
       const bool reverse = duration < 0.3333333f;
@@ -73,7 +74,7 @@ class DelayGranularPlayer : public GranularPlayer<DelayGrain, 32> {
 
     for (int i = 0; i < num_active_grains_; ++i) {
       active_grains_[i]->Render<HEAD_CROSSING_POLICY_STOP, true>(
-          delay_line, out);
+          delay_line, out, write_ptr);
     }
 
     Tick();  // Required to estimate the timing between grains.
