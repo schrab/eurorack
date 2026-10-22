@@ -70,8 +70,8 @@ void Voice::ResetResonator() {
     string_[i].Init(true);
   }
   dc_blocker_.Init(1.0f - 10.0f / kSampleRate);
-  // Runs with 56 extremely tightly; the resolution is a runtime knob so the
-  // single-core fallback can drop to 12 modes without a re-init losing it.
+  // 52 is the original Elements count. The resolution is a runtime knob so the
+  // single-core fallback can drop to 12 modes; persist it across resets.
   resonator_.set_resolution(resolution_);
 }
 

@@ -79,9 +79,13 @@ class Voice {
     resonator_model_ = resonator_model;
   }
   // Number of modal resonator bands. Persisted so that a Panic()/reset does not
-  // silently undo a reduced-resolution fallback.
+  // silently undo a reduced-resolution fallback. Bounded to [1, 56]: 56 runs
+  // extremely tightly, anything above is untested and blows the CPU budget.
+  static constexpr size_t kMinResolution = 1;
+  static constexpr size_t kMaxResolution = 56;
   inline void set_resolution(size_t resolution) {
-    resolution_ = resolution;
+    resolution_ = resolution < kMinResolution ? kMinResolution :
+      (resolution > kMaxResolution ? kMaxResolution : resolution);
     resonator_.set_resolution(resolution_);
   }
   inline size_t resolution() const { return resolution_; }
