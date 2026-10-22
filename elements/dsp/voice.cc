@@ -70,7 +70,7 @@ void Voice::ResetResonator() {
     string_[i].Init(true);
   }
   dc_blocker_.Init(1.0f - 10.0f / kSampleRate);
-  resonator_.set_resolution(24);  // 52 original; reduced for stability on ESP32 port
+  resonator_.set_resolution(12);  // test: original stable count
 }
 
 float chords[11][5] = {
