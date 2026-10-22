@@ -136,6 +136,17 @@ class GranularProcessor {
     granular_player_.SetMaxActiveGrains(n);
   }
 
+  inline void SetExternalActiveGrains(int n) {
+    granular_player_.SetExternalActiveGrains(n);
+  }
+
+  inline const DelayLine<resolution, max_delay * 2, 1>* mono_delay_line() const {
+    return &mono_delay_line_;
+  }
+  inline const DelayLine<resolution, max_delay, 2>* stereo_delay_line() const {
+    return &stereo_delay_line_;
+  }
+
   inline int ActiveGrains() const {
     return granular_player_.CountActiveGrains();
   }
@@ -190,13 +201,15 @@ class GranularProcessor {
       const FloatFrame* in,
       FloatFrame* out,
       size_t size,
-      HalfRateScratch* scratch = nullptr) {
+      HalfRateScratch* scratch = nullptr,
+      const FloatFrame* extra_wet = nullptr) {
     if (size > kMaxBlockSize) {
       size = kMaxBlockSize;
     }
     if (ratio == 1) {
       ProcessInternal(
-          triggers, taps, freeze, parameters, feedback, mono, in, out, size);
+          triggers, taps, freeze, parameters, feedback, mono, in, out, size,
+          extra_wet);
     } else {
       size_t d_size = size / size_t(ratio);
       HalfRateScratch& s = *scratch;
@@ -300,7 +313,8 @@ class GranularProcessor {
       const bool mono,
       const FloatFrame* in,
       FloatFrame* out,
-      size_t size) {
+      size_t size,
+      const FloatFrame* extra_wet = nullptr) {
     const float speed = stmlib::SemitonesToRatio(
         parameters.pitch.value(&pitch_modulation_, size, 24.0f, false));
 
@@ -325,6 +339,8 @@ class GranularProcessor {
     // Drop completed grains from the per-sample render list once per block.
     // Grains started by a trigger inside the loop refresh the list themselves.
     granular_player_.BeginBlock();
+
+    const FloatFrame* extra_wet_ptr = extra_wet;
     
     while (size--) {
       const float feedback = feedback_modulation.Next();
@@ -357,6 +373,10 @@ class GranularProcessor {
               parameters,
               out);
         }
+        if (extra_wet_ptr) {
+          out->l += extra_wet_ptr->l;
+          out->r += extra_wet_ptr->r;
+        }
         if (taps) {
           multitap_delay_.Render(
               &mono_delay_line_,
@@ -373,6 +393,10 @@ class GranularProcessor {
               *triggers,
               parameters,
               out);
+        }
+        if (extra_wet_ptr) {
+          out->l += extra_wet_ptr->l;
+          out->r += extra_wet_ptr->r;
         }
         if (taps) {
           multitap_delay_.Render(
@@ -405,6 +429,9 @@ class GranularProcessor {
       ++freeze;
       ++in;
       ++out;
+      if (extra_wet_ptr) {
+        ++extra_wet_ptr;
+      }
     }
   }
       

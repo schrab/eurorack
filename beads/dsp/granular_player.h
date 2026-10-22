@@ -82,6 +82,7 @@ class GranularPlayer {
       grain_priority_list_[i] = &grain_[i];
     }
     num_active_grains_ = 0;
+    external_active_grains_ = 0;
   }
 
   // Refresh the compact list of grains that still have audio to render.
@@ -106,9 +107,8 @@ class GranularPlayer {
   // to finish. Lowering the cap fades the excess grains out quickly instead of
   // waiting for their full duration.
   //
-  // TEMPORARY CPU-SPIKE CHANGE: a cap of 0 is accepted so the fixed engine
-  // cost can be measured with no grains rendering. Production callers only
-  // pass 2 or 4. Revert to `if (n < 1) n = 1;` after the grain-budget spike.
+  // 0 disables the player (fades existing grains out and starts none). The
+  // main player is at least 2 whenever granular is enabled in the plugin.
   inline void SetMaxActiveGrains(int n) {
     if (n < 0) n = 0;
     if (n > num_grains) n = num_grains;
@@ -125,6 +125,11 @@ class GranularPlayer {
     max_active_grains_ = n;
   }
   
+  inline void SetExternalActiveGrains(int n) {
+    if (n < 0) n = 0;
+    external_active_grains_ = n;
+  }
+
   inline float ComputeSpread(
       const TriggerGenerator::Output& trigger,
       const Parameters& p) const {
@@ -161,7 +166,8 @@ class GranularPlayer {
       const Parameters& p,
       float* amplitude,
       float* pan) {
-    const float num_active_grains = float(CountActiveGrains() + 1);
+    const float num_active_grains =
+        float(CountActiveGrains() + 1 + external_active_grains_);
     *amplitude = 1.0f / stmlib::Sqrt(num_active_grains);
 
     const float total_spread = ComputeSpread(trigger, p);
@@ -250,6 +256,7 @@ class GranularPlayer {
   T* active_grains_[num_grains];
   int num_active_grains_;
   int max_active_grains_;
+  int external_active_grains_ = 0;
  
   int preemptive_crossfade_time_;
   int instant_crossfade_time_;

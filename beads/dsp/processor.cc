@@ -52,6 +52,13 @@ void Processor::Init(
   processor_vintage_digital_.Init(host_sample_rate * 0.5f, buffers);
   processor_clean_tape_.Init(host_sample_rate * 0.5f, buffers);
   processor_dirty_tape_.Init(host_sample_rate * 0.5f, buffers);
+
+  helper_player_.Init(host_sample_rate);
+  helper_active_grains_.store(0);
+  helper_max_active_grains_.store(0);
+  core_max_active_grains_ = 0;
+  helper_split_counter_ = 0;
+  helper_reset_pending_ = false;
   
   dry_ = 0.0f;
   wet_ = 0.0f;
@@ -111,14 +118,32 @@ void Processor::Configure(Media media, bool mono) {
   trigger_generator_.Init(host_sample_rate_);
   delay_controller_.Init(host_sample_rate_, max_delay * (mono ? 2 : 1));
   reverb_.Reset(host_sample_rate_);
+  helper_reset_pending_ = true;
 }
 
 void Processor::SetMaxActiveGrains(int n) {
+  if (n < 0) n = 0;
+  if (n > 32) n = 32;
+  core_max_active_grains_ = n;
   // Apply to every media engine so the limit survives a media switch.
   processor_digital_.SetMaxActiveGrains(n);
   processor_vintage_digital_.SetMaxActiveGrains(n);
   processor_clean_tape_.SetMaxActiveGrains(n);
   processor_dirty_tape_.SetMaxActiveGrains(n);
+}
+
+void Processor::SetHelperMaxActiveGrains(int n) {
+  if (n < 0) n = 0;
+  if (n > 32) n = 32;
+  helper_max_active_grains_.store(n);
+}
+
+bool Processor::HelperOwnsTrigger(int counter, int total, int helper) {
+  return total > 0 && helper > 0 && (counter % total) < helper;
+}
+
+int Processor::HelperActiveGrains() const {
+  return helper_active_grains_.load();
 }
 
 void Processor::SetDelayModeEnabled(bool enabled) {
@@ -139,7 +164,9 @@ void Processor::Process(
     const MixParameters& mix_parameters,
     const FloatFrame* in,
     FloatFrame* out,
-    size_t size) {
+    size_t size,
+    GrainHelperBlock* helper_block,
+    const FloatFrame* extra_wet) {
   // TBD always passes 32 samples; never overflow the fixed scratch buffers.
   if (size > kMaxBlockSize) {
     size = kMaxBlockSize;
@@ -229,13 +256,62 @@ void Processor::Process(
       break;
   }
 
+  // Fill the helper block (if any) before the core granular processor writes
+  // the delay line. The snapshot is the write pointer at block start; the
+  // helper reads only already-written samples.
+  if (helper_block != nullptr) {
+    helper_block->valid = (triggers != nullptr) && (media_ == MEDIA_DIGITAL);
+    helper_block->size = size;
+    helper_block->mono = mono_;
+    helper_block->parameters = parameters;
+    helper_block->core_active_grains = ActiveGrains();
+    helper_block->write_ptr = helper_block->valid
+        ? *mutable_delay_write_ptr()
+        : 0;
+    helper_block->reset = false;
+    for (size_t i = 0; i < size; ++i) {
+      helper_block->triggers[i] = triggers ? triggers[i]
+                                          : TriggerGenerator::Output{};
+      if (helper_block->triggers[i].trigger) {
+        helper_block->triggers[i].trigger = false;
+      }
+    }
+    if (helper_block->valid) {
+      const int total = core_max_active_grains_ + helper_max_active_grains_.load();
+      for (size_t i = 0; i < size; ++i) {
+        if (triggers[i].trigger &&
+            HelperOwnsTrigger(helper_split_counter_++, total,
+                              helper_max_active_grains_.load())) {
+          helper_block->triggers[i].trigger = true;
+          triggers[i].trigger = false;
+        }
+      }
+      if (helper_reset_pending_) {
+        helper_block->reset = true;
+        helper_reset_pending_ = false;
+      }
+    }
+  }
+
+  // External active-grain count for amplitude/pan normalisation.
+  switch (media_) {
+    case MEDIA_DIGITAL:
+      processor_digital_.SetExternalActiveGrains(helper_active_grains_.load());
+      break;
+    default:
+      processor_vintage_digital_.SetExternalActiveGrains(0);
+      processor_clean_tape_.SetExternalActiveGrains(0);
+      processor_dirty_tape_.SetExternalActiveGrains(0);
+      break;
+  }
+
   // Granular processing.
   const float feedback = mix_parameters.feedback;
   switch (media_) {
     case MEDIA_DIGITAL:
       processor_digital_.Process(
           triggers, taps, freeze, parameters, feedback, mono_, in, out, size,
-          &half_rate_scratch_);
+          &half_rate_scratch_, extra_wet);
       break;
     
     case MEDIA_VINTAGE_DIGITAL:
@@ -316,6 +392,47 @@ void Processor::Process(
       out[i].r = gate_out_[i] ? -0.8f : 0.0f;
     }
   }
+}
+
+void Processor::RenderHelperGrains(const GrainHelperBlock& block, FloatFrame* out) {
+  if (!block.valid || block.size == 0) {
+    for (size_t i = 0; i < block.size; ++i) {
+      out[i].l = 0.0f;
+      out[i].r = 0.0f;
+    }
+    helper_active_grains_.store(0);
+    return;
+  }
+
+  if (block.reset) {
+    helper_player_.Reset();
+    helper_player_.SetExternalActiveGrains(0);
+  }
+  helper_player_.SetMaxActiveGrains(helper_max_active_grains_.load());
+  helper_player_.SetExternalActiveGrains(block.core_active_grains);
+
+  const bool mono = block.mono;
+  const size_t size = block.size;
+  helper_player_.BeginBlock();
+  for (size_t i = 0; i < size; ++i) {
+    out[i].l = 0.0f;
+    out[i].r = 0.0f;
+  }
+  if (mono) {
+    auto dl = processor_digital_.mono_delay_line();
+    for (size_t i = 0; i < size; ++i) {
+      helper_player_.Render(dl, block.triggers[i], block.parameters, &out[i],
+                            block.write_ptr);
+    }
+  } else {
+    auto dl = processor_digital_.stereo_delay_line();
+    for (size_t i = 0; i < size; ++i) {
+      helper_player_.Render(dl, block.triggers[i], block.parameters, &out[i],
+                            block.write_ptr);
+    }
+  }
+
+  helper_active_grains_.store(helper_player_.CountActiveGrains());
 }
 
 }  // namespace beads

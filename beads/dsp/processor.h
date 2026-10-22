@@ -36,6 +36,8 @@
 #include "beads/dsp/fx/reverb.h"
 #include "beads/dsp/fx/wow_and_flutter.h"
 
+#include <atomic>
+
 // The codec runs at a fixed host sample rate (44.1kHz on TBD). The wet signal
 // is downsampled by a 0.5 factor for the half-rate media (vintage digital and
 // both tape modes) and low-pass filtering is applied to the output signal
@@ -68,6 +70,17 @@ class Processor {
     bool output_gate;
   };
 
+  struct GrainHelperBlock {
+    TriggerGenerator::Output triggers[beads::kMaxBlockSize] = {};
+    Parameters parameters = {};
+    int write_ptr = 0;
+    int core_active_grains = 0;
+    size_t size = 0;
+    bool mono = false;
+    bool reset = false;
+    bool valid = false;
+  };
+
   // TBD always processes 32-sample blocks. All scratch buffers used by Process
   // are fixed-size members so that the audio task stack (4KB) is not used for
   // them. Must match beads::kMaxBlockSize (granular_processor.h).
@@ -82,6 +95,10 @@ class Processor {
       float host_sample_rate);
   void Configure(Media media, bool mono);
   void SetMaxActiveGrains(int n);
+  void SetHelperMaxActiveGrains(int n);
+  void RenderHelperGrains(const GrainHelperBlock& block, FloatFrame* out);
+  int HelperActiveGrains() const;
+  static bool HelperOwnsTrigger(int counter, int total, int helper);
   // Number of grains currently rendering. Host-test and bring-up aid.
   inline int ActiveGrains() const {
     switch (media_) {
@@ -188,7 +205,9 @@ class Processor {
       const MixParameters& mix_parameters,
       const FloatFrame* in,
       FloatFrame* out,
-      size_t size);
+      size_t size,
+      GrainHelperBlock* helper_block = nullptr,
+      const FloatFrame* extra_wet = nullptr);
   
  private:
   GranularProcessor<
@@ -207,6 +226,13 @@ class Processor {
       RESOLUTION_8_BIT,
       kDelayBufferSizeBits / (8 * 2),
       2> processor_dirty_tape_;
+
+  DelayGranularPlayer helper_player_;
+  std::atomic<int> helper_active_grains_{0};
+  std::atomic<int> helper_max_active_grains_{0};
+  int core_max_active_grains_ = 0;
+  int helper_split_counter_ = 0;
+  bool helper_reset_pending_ = false;
 
   TriggerGenerator trigger_generator_;
   DelayController delay_controller_;
