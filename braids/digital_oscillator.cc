@@ -1634,7 +1634,10 @@ void DigitalOscillator::RenderWaveLine(
   uint16_t scan = smoothed_parameter_;
   const uint8_t* wave_0 = wt_waves + wave_line[previous_parameter_[0] >> 9] * 129;
   const uint8_t* wave_1 = wt_waves + wave_line[scan >> 10] * 129;
-  const uint8_t* wave_2 = wt_waves + wave_line[(scan >> 10) + 1] * 129;
+  // The line's last wave has no next one: at the top of Timbre it fades to
+  // itself instead of reading one past the 64-entry table.
+  const uint16_t next = (scan >> 10) < 63 ? (scan >> 10) + 1 : 63;
+  const uint8_t* wave_2 = wt_waves + wave_line[next] * 129;
 
   uint16_t smooth_xfade = scan << 6;
   uint16_t rough_xfade = 0;

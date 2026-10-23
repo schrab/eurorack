@@ -251,6 +251,16 @@ void LPCSpeechSynthController::Render(
     }
   }
   
+  // Harmonics left the word banks while a word played or held its last frame:
+  // its position counts the word bank's frames, not the phoneme table's, so
+  // playback goes back to scan mode instead of reading past the phonemes.
+  if (bank == -1 && (playback_frame_ >= kLPCSpeechSynthNumPhonemes ||
+                     last_playback_frame_ > kLPCSpeechSynthNumPhonemes)) {
+    playback_frame_ = -1;
+    last_playback_frame_ = -1;
+    remaining_frame_samples_ = 0;
+  }
+
   const int num_frames = bank == -1
       ? kLPCSpeechSynthNumVowels
       : word_bank_->num_frames();
