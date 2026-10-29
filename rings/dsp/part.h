@@ -160,10 +160,12 @@ class Part {
   uint32_t step_counter_ {0};
   int32_t polyphony_ {0};
   
-  Resonator resonator_[kMaxPolyphony];
-  String string_[kNumStrings];
+  union {
+    Resonator resonator_[kMaxPolyphony];
+    String string_[kNumStrings];
+    FMVoice fm_voice_[kMaxPolyphony];
+  };
   stmlib::CosineOscillator lfo_[kNumStrings];
-  FMVoice fm_voice_[kMaxPolyphony];
   
   stmlib::Svf excitation_filter_[kMaxPolyphony];
   stmlib::DCBlocker dc_blocker_[kMaxPolyphony];
