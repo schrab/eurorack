@@ -129,7 +129,11 @@ class OutputChannel {
   
   LagProcessor lag_processor_;
   
-  Quantizer quantizer_[6];
+  // ctag-tbd port: 8 slots (was 6). The BBA MOD menu exposes the 7 diatonic
+  // modes + pentatonic as scale indices 0..7; MarblesEngine::Init() calls
+  // LoadScale(0..7) and Process() indexes quantizer_[scale_index_], so the
+  // upstream hard-coded 6 overflowed the array (DSP freeze).
+  Quantizer quantizer_[8];
   
   DISALLOW_COPY_AND_ASSIGN(OutputChannel);
 };
