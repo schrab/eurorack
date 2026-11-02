@@ -28,7 +28,22 @@
 
 #include "elements/dsp/part.h"
 
+#include <atomic>
+#include "esp_log.h"
 #include "elements/resources.h"
+
+namespace elements {
+std::atomic<uint32_t> g_panic_count{0};
+std::atomic<uint32_t> g_max_resonator_level_x10{0};
+}
+
+extern "C" uint32_t elements_debug_get_panic_count() {
+  return elements::g_panic_count.load(std::memory_order_relaxed);
+}
+
+extern "C" float elements_debug_get_max_resonator_level() {
+  return elements::g_max_resonator_level_x10.load(std::memory_order_relaxed) * 0.1f;
+}
 
 namespace elements {
 
@@ -121,6 +136,7 @@ void Part::Process(
       // If the resonator is blowing up (this has been observed once before
       // corrective action was taken), reset the state of the filters to 0
       // to prevent the module to freeze with resonators' state blocked at NaN.
+      ESP_LOGW("Elements", "PANIC RESET: voice resonators cleared to 0 (resonator_level was %.2f)", resonator_level_);
       for (size_t i = 0; i < kNumVoices; ++i) {
         voice_[i].Panic();
       }
@@ -219,8 +235,20 @@ void Part::Process(
     resonator_level += error * (error > 0.0f ? 0.05f : 0.0005f);
   }
   resonator_level_ = resonator_level;
+  uint32_t cur_x10 = static_cast<uint32_t>(resonator_level * 10.0f);
+  uint32_t prev_max = elements::g_max_resonator_level_x10.load(std::memory_order_relaxed);
+  while (cur_x10 > prev_max && !elements::g_max_resonator_level_x10.compare_exchange_weak(prev_max, cur_x10, std::memory_order_relaxed)) {}
+
   if (resonator_level >= 200.0f) {
     panic_ = true;
+    elements::g_panic_count.fetch_add(1, std::memory_order_relaxed);
+    ESP_LOGW("Elements", "PANIC TRIGGERED! resonator_level=%.2f >= 200.0 (count=%lu)",
+             resonator_level, (unsigned long)elements::g_panic_count.load(std::memory_order_relaxed));
+  } else {
+    static uint32_t s_block_cnt = 0;
+    if ((++s_block_cnt & 1023) == 0 && resonator_level > 20.0f) {
+      ESP_LOGW("Elements", "HIGH resonator_level=%.2f (panic at 200)", resonator_level);
+    }
   }
   
   if (easter_egg_) {
