@@ -76,6 +76,11 @@ class Voice {
     ResetResonator();
   }
   void set_resonator_model(ResonatorModel resonator_model) {
+    if (resonator_model != resonator_model_) {
+      // Model switch over a shared storage union: the inactive engine's
+      // state was clobbered by the active one — re-initialise both.
+      ResetResonator();
+    }
     resonator_model_ = resonator_model;
   }
   // Number of modal resonator bands. Persisted so that a Panic()/reset does not
@@ -107,13 +112,23 @@ class Voice {
   }
   
   MultistageEnvelope envelope_;
-  Tube tube_; 
+  Tube tube_;
   Exciter bow_;
   Exciter blow_;
   Exciter strike_;
   Diffuser diffuser_;
-  Resonator resonator_;
-  String string_[kNumStrings];
+  // The modal resonator and the string bank are STRICTLY EXCLUSIVE
+  // (Voice::Process dispatches on resonator_model_ — this fork has no FM
+  // voice in Part). Sharing their storage, as upstream rings does for the
+  // same reason, shrinks this object by sizeof(Resonator) = 34,320 B so the
+  // whole Part fits the internal-SRAM plugin arena on BBA2 (the object +
+  // the arena can not coexist otherwise; PSRAM is not acceptable). On a
+  // model switch the inactive engine's bytes are clobbered, so
+  // set_resonator_model re-initialises both engines (ResetResonator).
+  union {
+    Resonator resonator_;
+    String string_[kNumStrings];
+  };
   stmlib::DCBlocker dc_blocker_;
   
   float strength_;
