@@ -31,6 +31,7 @@
 #include <atomic>
 #include "esp_log.h"
 #include "elements/resources.h"
+#include "stmlib/utils/dsp.h"
 
 namespace elements {
 std::atomic<uint32_t> g_panic_count{0};
@@ -50,6 +51,12 @@ extern "C" float elements_debug_get_max_resonator_level() {
 // Subbotnik, Freakwaves, Bjorklund). Stateless, external linkage — the
 // distortion stage borrows it instead of duplicating the circuit.
 extern float Fold_do(float signal, float level);
+
+// braids' per-unit sine table (braids/resources.cc, same component build).
+// Referenced through an extern declaration so the elements TU never
+// includes braids/resources.h — its LUT_* macros collide with the
+// elements ones (the documented deferred collision class).
+namespace braids { extern const int16_t wav_sine[]; }
 
 namespace elements {
 
@@ -87,6 +94,37 @@ void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
   patch_.dist_tone = 1.0f;
   patch_.dist_mix = 1.0f;
   dist_lp_[0] = dist_lp_[1] = 0.0f;
+  // Type 3 transfer table: braids SignatureWaveshaper::Init verbatim
+  // (int16/int32 semantics included — the uint16 bumplet_gain wrap at the
+  // extremes is part of the curve), seeded 0xcafe = the exact curve TBD03
+  // ships with.
+  {
+    uint32_t seed = 0xcafe;
+    int32_t skew = seed & 15;
+    seed >>= 4;
+    int32_t sigmoid_strength = seed & 31;
+    seed >>= 5;
+    int32_t bumplets_frequency = seed & 3;
+    seed >>= 2;
+    bumplets_frequency += 3;
+    int32_t bumplets_width = seed & 7;
+    seed >>= 3;
+    bumplets_width += 1;
+    bumplets_width <<= 7;
+    bumplets_width *= bumplets_width;
+    for (int i = 0; i < 256; ++i) {
+      int16_t x = (i - 128) << 8;
+      int16_t x_skew = i * i - 32768;
+      x = stmlib::Mix(x, x_skew, skew << 11);
+      int16_t sigmoid = x * (8192 + (sigmoid_strength << 10)) /
+          (8192 + (sigmoid_strength * abs(x) >> 5));
+      int16_t bumplets = braids::wav_sine[(i * bumplets_frequency) & 255];
+      uint16_t bumplet_gain = x * x / (bumplets_width) + 16;
+      bumplet_gain = 32768 * 128 / (128 + bumplet_gain);
+      dist_ws_[i] = stmlib::Mix(sigmoid, bumplets, bumplet_gain);
+    }
+    dist_ws_[256] = dist_ws_[255];
+  }
   previous_gate_ = false;
   active_voice_ = 0;
   
@@ -318,7 +356,7 @@ void Part::Process(
     }
   }
 
-  // Simple stereo distortion stage (TBD), three characters on one Type
+  // Simple stereo distortion stage (TBD), four characters on one Type
   // selector — same curve on both channels, followed by a 1-pole tone LP
   // and a dry/wet blend:
   //   0 tube: SoftClip(k*x)/SoftClip(k) — the stmlib tanh-family rational
@@ -329,6 +367,10 @@ void Part::Process(
   //   2 fuzz: biased (SoftClip(k*x+b) - SoftClip(b)) / (1 + SoftClip(b)) —
   //     bounded on BOTH sides, the positive swing shrinks as the bias grows
   //     (the classic asymmetric fuzz); Bias only acts in this mode.
+  //   3 shape: TBD03's seeded waveshaper (braids SignatureWaveshaper math
+  //     verbatim, seed 0xcafe = TBD03's curve; skew + sigmoid + bumplets =
+  //     the braids "analog impurity" transfer) with Drive as pre-gain into
+  //     the curve. Table lookup, ~10 cycles per sample.
   // No oversampling, one division per block + one per sample in the tanh
   // modes — a few us per block, safe on the A1S helper budget where the
   // Warps stage is not. Sits after the metering/panic block (the guard
@@ -339,9 +381,10 @@ void Part::Process(
     const float d = patch_.dist_drive;
     const float mix = patch_.dist_mix;
     const float lp_k = 0.04f + 0.96f * patch_.dist_tone;
-    const int type = static_cast<int>(patch_.dist_type + 0.5f) % 3;
+    const int type = static_cast<int>(patch_.dist_type + 0.5f) % 4;
     float k = 0.0f, k_norm = 1.0f;
     float bias = 0.0f, bias_sub = 0.0f, bias_norm = 1.0f;
+    float ws_gain = 1.0f;
     if (type == 0) {
       k = 1.0f + 9.0f * d * d;
       k_norm = 1.0f / SoftClip(k);
@@ -351,6 +394,10 @@ void Part::Process(
       const float s_b = SoftClip(bias);
       bias_sub = s_b;
       bias_norm = 1.0f / (1.0f + s_b);
+    } else if (type == 3) {
+      // TBD03 waveshaper: Drive pre-gains into the seeded curve (deeper
+      // sigmoid knee + bumplets), the table lookup itself is ~10 cycles.
+      ws_gain = 1.0f + 7.0f * d;
     }
     float* chans[2] = { main, aux };
     for (size_t c = 0; c < 2; ++c) {
@@ -362,6 +409,15 @@ void Part::Process(
           wet = Fold_do(dry, d);
         } else if (type == 2) {
           wet = (SoftClip(k * dry + bias) - bias_sub) * bias_norm;
+        } else if (type == 3) {
+          float xg = dry * ws_gain;
+          if (xg > 1.0f) xg = 1.0f; else if (xg < -1.0f) xg = -1.0f;
+          const uint16_t idx = static_cast<uint16_t>(
+              static_cast<int16_t>(xg * 32767.0f) + 32768);
+          const int32_t a = dist_ws_[idx >> 8];
+          const int32_t b = dist_ws_[(idx >> 8) + 1];
+          wet = static_cast<float>(a + ((b - a) * (idx & 0xff) >> 8)) *
+              (1.0f / 32768.0f);
         } else {
           wet = SoftClip(k * dry) * k_norm;
         }

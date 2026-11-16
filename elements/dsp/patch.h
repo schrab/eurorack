@@ -64,11 +64,11 @@ struct Patch {
   float warps_carrier_level;
   float warps_mix;
 
-  // TBD: simple stereo distortion stage, three characters selected by
+  // TBD: simple stereo distortion stage, four characters selected by
   // dist_type (0 = tube: SoftClip knee glue, 1 = fold: Befaco/Vult
-  // wavefolder, 2 = fuzz: biased asymmetric SoftClip). All 0..1; zero cost
-  // while dist_drive == 0. Cheap enough for the A1S helper budget where
-  // the Warps stage is not.
+  // wavefolder, 2 = fuzz: biased asymmetric SoftClip, 3 = shape: TBD03's
+  // seeded braids waveshaper). All 0..1; zero cost while dist_drive == 0.
+  // Cheap enough for the A1S helper budget where the Warps stage is not.
   float dist_type;
   float dist_drive;
   float dist_bias;
