@@ -125,6 +125,9 @@ class Part {
   // Not owned; null = Warps stage bypassed entirely (zero cost).
   warps::Modulator* warps_;
 
+  // Simple distortion stage: one 1-pole tone state per output channel.
+  float dist_lp_[2];
+
   ResonatorModel resonator_model_;
   
   DISALLOW_COPY_AND_ASSIGN(Part);

@@ -45,6 +45,12 @@ extern "C" float elements_debug_get_max_resonator_level() {
   return elements::g_max_resonator_level_x10.load(std::memory_order_relaxed) * 0.1f;
 }
 
+// Retroactor's Vult-generated Befaco wavefolder (vult_formantor.cpp,
+// compiled in the ctagSoundProcessor component; also used by Formantor,
+// Subbotnik, Freakwaves, Bjorklund). Stateless, external linkage — the
+// distortion stage borrows it instead of duplicating the circuit.
+extern float Fold_do(float signal, float level);
+
 namespace elements {
 
 using namespace std;
@@ -75,6 +81,12 @@ void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
   patch_.warps_mod_level = 0.5f;
   patch_.warps_carrier_level = 0.5f;
   patch_.warps_mix = 0.0f;
+  patch_.dist_type = 0.0f;
+  patch_.dist_drive = 0.0f;
+  patch_.dist_bias = 0.0f;
+  patch_.dist_tone = 1.0f;
+  patch_.dist_mix = 1.0f;
+  dist_lp_[0] = dist_lp_[1] = 0.0f;
   previous_gate_ = false;
   active_voice_ = 0;
   
@@ -303,6 +315,60 @@ void Part::Process(
       float w = static_cast<float>(warps_out[i].l) * (1.0f / 32768.0f);
       main[i] += (w - main[i]) * mix;
       aux[i] += (w - aux[i]) * mix;
+    }
+  }
+
+  // Simple stereo distortion stage (TBD), three characters on one Type
+  // selector — same curve on both channels, followed by a 1-pole tone LP
+  // and a dry/wet blend:
+  //   0 tube: SoftClip(k*x)/SoftClip(k) — the stmlib tanh-family rational
+  //     (unity small-signal gain, +-1 asymptote, one division per BLOCK in
+  //     the normalization): punch-preserving glue, odd harmonics.
+  //   1 fold: Fold_do(x, d) — Retroactor's Vult/Befaco wavefolder (identity
+  //     at level 0, output exactly in [-1, 1]): aggressive folds.
+  //   2 fuzz: biased (SoftClip(k*x+b) - SoftClip(b)) / (1 + SoftClip(b)) —
+  //     bounded on BOTH sides, the positive swing shrinks as the bias grows
+  //     (the classic asymmetric fuzz); Bias only acts in this mode.
+  // No oversampling, one division per block + one per sample in the tanh
+  // modes — a few us per block, safe on the A1S helper budget where the
+  // Warps stage is not. Sits after the metering/panic block (the guard
+  // keeps measuring the pre-drive resonator level) and every wet path is
+  // bounded, so the reverb can never be overdriven by this stage.
+  // drive 0 = zero-cost bypass.
+  if (patch_.dist_drive > 0.0f) {
+    const float d = patch_.dist_drive;
+    const float mix = patch_.dist_mix;
+    const float lp_k = 0.04f + 0.96f * patch_.dist_tone;
+    const int type = static_cast<int>(patch_.dist_type + 0.5f) % 3;
+    float k = 0.0f, k_norm = 1.0f;
+    float bias = 0.0f, bias_sub = 0.0f, bias_norm = 1.0f;
+    if (type == 0) {
+      k = 1.0f + 9.0f * d * d;
+      k_norm = 1.0f / SoftClip(k);
+    } else if (type == 2) {
+      k = 1.0f + 9.0f * d * d;
+      bias = patch_.dist_bias;
+      const float s_b = SoftClip(bias);
+      bias_sub = s_b;
+      bias_norm = 1.0f / (1.0f + s_b);
+    }
+    float* chans[2] = { main, aux };
+    for (size_t c = 0; c < 2; ++c) {
+      float lp = dist_lp_[c];
+      for (size_t i = 0; i < size; ++i) {
+        const float dry = chans[c][i];
+        float wet;
+        if (type == 1) {
+          wet = Fold_do(dry, d);
+        } else if (type == 2) {
+          wet = (SoftClip(k * dry + bias) - bias_sub) * bias_norm;
+        } else {
+          wet = SoftClip(k * dry) * k_norm;
+        }
+        lp += lp_k * (wet - lp);
+        chans[c][i] = dry + (lp - dry) * mix;
+      }
+      dist_lp_[c] = lp;
     }
   }
 
