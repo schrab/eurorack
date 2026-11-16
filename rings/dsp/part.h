@@ -184,6 +184,9 @@ class Part {
   // TBD distortion stage: one 1-pole tone state per output channel.
   float dist_lp_[2];
 
+  // Sustainer AGC: one envelope state per output channel.
+  float dist_env_[2];
+
   Reverb reverb_;
   Limiter limiter_;
   

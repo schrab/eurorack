@@ -44,6 +44,9 @@ struct Patch {
   float dist_type {0.0f};
   float dist_drive {0.0f};
   float dist_bias {0.0f};
+  // Sustainer AGC after the clip (see elements/dsp/part.cc): 0 = off,
+  // ~16x max boost at 1.0 holding the output near a fixed target.
+  float dist_sustain {0.0f};
   float dist_tone {1.0f};
   float dist_mix {1.0f};
 };

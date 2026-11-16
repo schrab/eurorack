@@ -91,9 +91,11 @@ void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
   patch_.dist_type = 0.0f;
   patch_.dist_drive = 0.0f;
   patch_.dist_bias = 0.0f;
+  patch_.dist_sustain = 0.0f;
   patch_.dist_tone = 1.0f;
   patch_.dist_mix = 1.0f;
   dist_lp_[0] = dist_lp_[1] = 0.0f;
+  dist_env_[0] = dist_env_[1] = 0.0f;
   // Type 3 transfer table: braids SignatureWaveshaper::Init verbatim
   // (int16/int32 semantics included — the uint16 bumplet_gain wrap at the
   // extremes is part of the curve), seeded 0xcafe = the exact curve TBD03
@@ -401,9 +403,22 @@ void Part::Process(
       // sigmoid knee + bumplets), the table lookup itself is ~10 cycles.
       ws_gain = 1.0f + 7.0f * d;
     }
+    // Sustainer AGC: as the note decays the envelope falls and the gain
+    // rises (up to 1 + 15*sustain^2, ~16x at full) holding the output near
+    // a fixed 0.5 target — the audible tail extends until the resonator
+    // decays below target/maxGain. Fast attack (~2 samples) so a new strike
+    // ducks the gain instead of pumping; ~250 ms release shapes how quickly
+    // the boost fades in. Envelope state decays toward 0 while the stage is
+    // off so re-enabling starts clean.
+    const float sus_max = 1.0f + 15.0f * patch_.dist_sustain * patch_.dist_sustain;
+    const bool sustain_on = sus_max > 1.001f;
     float* chans[2] = { main, aux };
     for (size_t c = 0; c < 2; ++c) {
       float lp = dist_lp_[c];
+      float env = dist_env_[c];
+      if (!sustain_on) {
+        env *= 0.995f;
+      }
       for (size_t i = 0; i < size; ++i) {
         const float dry = chans[c][i];
         float wet;
@@ -423,11 +438,22 @@ void Part::Process(
         } else {
           wet = SoftClip(k * dry) * k_norm;
         }
+        if (sustain_on) {
+          const float x = fabsf(wet);
+          env += (x > env ? 0.5f : 0.000125f) * (x - env);
+          float g = 0.5f / (env > 0.002f ? env : 0.002f);
+          if (g > sus_max) g = sus_max;
+          wet *= g;
+        }
         lp += lp_k * (wet - lp);
         chans[c][i] = dry + (lp - dry) * mix;
       }
       dist_lp_[c] = lp;
+      dist_env_[c] = env;
     }
+  } else {
+    dist_env_[0] *= 0.995f;
+    dist_env_[1] *= 0.995f;
   }
 
   // Apply reverb.

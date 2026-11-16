@@ -626,9 +626,18 @@ void Part::Process(
     } else if (type == 3) {
       ws_gain = 1.0f + 7.0f * d;
     }
+    // Sustainer AGC — identical to the Elements stage: the gain rises as
+    // the note decays (up to 1 + 15*sustain^2) holding the output near a
+    // fixed 0.5 target; fast attack ducks new strikes, ~250 ms release.
+    const float sus_max = 1.0f + 15.0f * patch.dist_sustain * patch.dist_sustain;
+    const bool sustain_on = sus_max > 1.001f;
     float* chans[2] = { out, aux };
     for (size_t c = 0; c < 2; ++c) {
       float lp = dist_lp_[c];
+      float env = dist_env_[c];
+      if (!sustain_on) {
+        env *= 0.995f;
+      }
       for (size_t i = 0; i < size; ++i) {
         const float dry = chans[c][i];
         float wet;
@@ -648,11 +657,22 @@ void Part::Process(
         } else {
           wet = SoftClip(k * dry) * k_norm;
         }
+        if (sustain_on) {
+          const float x = fabsf(wet);
+          env += (x > env ? 0.5f : 0.000125f) * (x - env);
+          float g = 0.5f / (env > 0.002f ? env : 0.002f);
+          if (g > sus_max) g = sus_max;
+          wet *= g;
+        }
         lp += lp_k * (wet - lp);
         chans[c][i] = dry + (lp - dry) * mix;
       }
       dist_lp_[c] = lp;
+      dist_env_[c] = env;
     }
+  } else {
+    dist_env_[0] *= 0.995f;
+    dist_env_[1] *= 0.995f;
   }
 
   if (model_ == RESONATOR_MODEL_STRING_AND_REVERB) {

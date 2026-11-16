@@ -72,6 +72,10 @@ struct Patch {
   float dist_type;
   float dist_drive;
   float dist_bias;
+  // Sustainer: envelope-follower AGC after the clip — as the note decays
+  // the gain rises (up to ~16x at 1.0) and holds the output near a fixed
+  // target, extending the audible tail. 0 = off.
+  float dist_sustain;
   float dist_tone;
   float dist_mix;
 };

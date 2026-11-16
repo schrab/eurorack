@@ -128,6 +128,9 @@ class Part {
   // Simple distortion stage: one 1-pole tone state per output channel.
   float dist_lp_[2];
 
+  // Sustainer AGC: one envelope state per output channel.
+  float dist_env_[2];
+
   // Type 3 "shape": TBD03's seeded waveshaper transfer table (braids
   // SignatureWaveshaper math, verbatim; 257 int32 entries = 1,028 B).
   int32_t dist_ws_[257];
