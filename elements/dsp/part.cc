@@ -220,11 +220,15 @@ void Part::Process(
   fill(&main[0], &main[size], 0.0f);
   fill(&aux[0], &aux[size], 0.0f);
   
-  // Compute the raw signal gain, stereo spread, and reverb parameters from
-  // the "space" metaparameter.
+  // Compute the stereo spread and reverb parameters from the "space"
+  // metaparameter. NOTE (TBD): upstream Elements below space 0.1 blends the
+  // RAW EXCITER onto the aux output (raw_gain) — the real module's "patch
+  // the exciter out of AUX" feature. This instrument's outputs go straight
+  // to the codec/speakers, where those exciter pulses are heard as clicks
+  // in the right channel, so the blend is removed and both outputs carry
+  // resonator signal only. The exciter stays available internally — the
+  // Warps stage taps raw_buffer_ directly.
   float space = patch_.space >= 1.0f ? 1.0f : patch_.space;
-  float raw_gain = space <= 0.05f ? 1.0f : 
-    (space <= 0.1f ? 2.0f - space * 20.0f : 0.0f);
   space = space >= 0.1f ? space - 0.1f : 0.0f;
   float spread = space <= 0.7f ? space : 0.7f;
   float reverb_amount = space >= 0.5f ? 1.0f * (space - 0.5f) : 0.0f;
@@ -268,13 +272,11 @@ void Part::Process(
           size);
     }
     
-    // Mixdown.
+    // Mixdown: a center/side (M-S) stereo pair, resonator signal only.
     for (size_t j = 0; j < size; ++j) {
       float side = sides_buffer_[j] * spread;
-      float r = center_buffer_[j] - side;
-      float l = center_buffer_[j] + side;;
-      main[j] += r;
-      aux[j] += l + (raw_buffer_[j] - l) * raw_gain;
+      main[j] += center_buffer_[j] - side;
+      aux[j] += center_buffer_[j] + side;
     }
   }
   
