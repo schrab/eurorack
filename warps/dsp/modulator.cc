@@ -32,7 +32,6 @@
 
 #include "stmlib/dsp/units.h"
 
-#include "warps/drivers/debug_pin.h"
 #include "warps/resources.h"
 
 namespace warps {
@@ -40,9 +39,10 @@ namespace warps {
 using namespace std;
 using namespace stmlib;
 
-void Modulator::Init(float sample_rate) {
+void Modulator::Init(float sample_rate, Vocoder* vocoder_storage) {
   bypass_ = false;
   easter_egg_ = false;
+  vocoder_ = vocoder_storage;
   
   for (int32_t i = 0; i < 2; ++i) {
     amplifier_[i].Init();
@@ -54,7 +54,7 @@ void Modulator::Init(float sample_rate) {
   xmod_oscillator_.Init(sample_rate);
   vocoder_oscillator_.Init(sample_rate);
   quadrature_oscillator_.Init(sample_rate);
-  vocoder_.Init(sample_rate);
+  vocoder_->Init(sample_rate);
   
   previous_parameters_.carrier_shape = 0;
   previous_parameters_.channel_drive[0] = 0.0f;
@@ -315,9 +315,9 @@ void Modulator::Process(ShortFrame* input, ShortFrame* output, size_t size) {
     float release_time = 4.0f * (parameters_.modulation_algorithm - 0.75f);
     CONSTRAIN(release_time, 0.0f, 1.0f);
     
-    vocoder_.set_release_time(release_time * (2.0f - release_time));
-    vocoder_.set_formant_shift(parameters_.modulation_parameter);
-    vocoder_.Process(modulator, carrier, main_output, size);
+    vocoder_->set_release_time(release_time * (2.0f - release_time));
+    vocoder_->set_formant_shift(parameters_.modulation_parameter);
+    vocoder_->Process(modulator, carrier, main_output, size);
   }
   
   // Cross-fade to raw modulator for the transition between cross-modulation

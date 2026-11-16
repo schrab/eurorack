@@ -53,6 +53,16 @@ struct Patch {
   float space;
   
   float modulation_frequency;
+
+  // TBD: internal Warps cross-modulation stage (carrier = resonator mono
+  // sum, modulator = raw exciter). Algorithm/timbre/mix are 0..1, the two
+  // levels map onto the engine's channel_drive gain pots (0..1). All zero
+  // cost while warps_algorithm == 0.
+  float warps_algorithm;
+  float warps_timbre;
+  float warps_mod_level;
+  float warps_carrier_level;
+  float warps_mix;
 };
 
 }  // namespace elements

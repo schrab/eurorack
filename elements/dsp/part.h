@@ -35,6 +35,7 @@
 #include "elements/dsp/ominous_voice.h"
 #include "elements/dsp/patch.h"
 #include "elements/dsp/voice.h"
+#include "warps/dsp/modulator.h"
 
 namespace elements {
 
@@ -54,7 +55,11 @@ class Part {
   Part() { }
   ~Part() { }
   
-  void Init(uint16_t* reverb_buffer);
+  // warps: externally owned cross-modulator, already Init'ed by the embedder
+  // (the wrapper allocates the ~7.4 kB core and the 65.8 kB vocoder storage
+  // separately and calls Modulator::Init with the vocoder pointer). May be
+  // null = stage absent (zero cost).
+  void Init(uint16_t* reverb_buffer, warps::Modulator* warps = nullptr);
   
   void Process(
       const PerformanceState& performance_state,
@@ -116,7 +121,10 @@ class Part {
   float resonator_level_;
   
   Reverb reverb_;
-  
+
+  // Not owned; null = Warps stage bypassed entirely (zero cost).
+  warps::Modulator* warps_;
+
   ResonatorModel resonator_model_;
   
   DISALLOW_COPY_AND_ASSIGN(Part);

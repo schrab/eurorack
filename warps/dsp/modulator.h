@@ -140,7 +140,12 @@ class Modulator {
   Modulator() { }
   ~Modulator() { }
 
-  void Init(float sample_rate);
+  // TBD: the vocoder (65.8 kB — two 20-band filter banks) is the bulk of
+  // sizeof(Modulator); it is allocated OUTSIDE this object by the embedder
+  // (PSRAM is acceptable — the vocoder is the CPU-heavy path and only runs
+  // above modulation_algorithm 0.7). `vocoder_storage` must outlive this
+  // Modulator.
+  void Init(float sample_rate, Vocoder* vocoder_storage);
   void Process(ShortFrame* input, ShortFrame* output, size_t size);
   void ProcessEasterEgg(ShortFrame* input, ShortFrame* output, size_t size);
   inline Parameters* mutable_parameters() { return &parameters_; }
@@ -219,7 +224,7 @@ class Modulator {
   SampleRateConverter<SRC_UP, kOversampling, 48> src_up_[2];
   SampleRateConverter<SRC_DOWN, kOversampling, 48> src_down_;
 
-  Vocoder vocoder_;
+  Vocoder* vocoder_;
   QuadratureTransform quadrature_transform_[2];
   
   float internal_modulation_[kMaxBlockSize];
