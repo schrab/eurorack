@@ -28,16 +28,68 @@
 
 #include "rings/dsp/part.h"
 
+#include "stmlib/dsp/dsp.h"
 #include "stmlib/dsp/units.h"
+#include "stmlib/utils/dsp.h"
 
 #include "rings/resources.h"
+
+// Retroactor's Vult-generated Befaco wavefolder (vult_formantor.cpp,
+// compiled in the ctagSoundProcessor component) — the distortion stage's
+// fold mode borrows it, same as the Elements stage.
+extern float Fold_do(float signal, float level);
+
+// braids' per-unit sine table (braids/resources.cc, same component build),
+// via a namespace-scoped extern — including braids/resources.h would trip
+// the documented LUT-macro collision class.
+namespace braids { extern const int16_t wav_sine[]; }
 
 namespace rings {
 
 using namespace std;
 using namespace stmlib;
 
+// Type 3 "shape" transfer table (braids SignatureWaveshaper math verbatim,
+// seed 0xcafe = TBD03's curve). FILE-STATIC, not a Part member: the TBDings
+// wrapper fills the plugin arena exactly (object + blockMem), so the
+// 1,028 B table must not grow the object. Deterministic seed -> one shared
+// table for every Part instance.
+int32_t s_dist_ws_[257];
+bool s_dist_ws_built_ = false;
+
+static void BuildDistShapeTable() {
+  uint32_t seed = 0xcafe;
+  int32_t skew = seed & 15;
+  seed >>= 4;
+  int32_t sigmoid_strength = seed & 31;
+  seed >>= 5;
+  int32_t bumplets_frequency = seed & 3;
+  seed >>= 2;
+  bumplets_frequency += 3;
+  int32_t bumplets_width = seed & 7;
+  seed >>= 3;
+  bumplets_width += 1;
+  bumplets_width <<= 7;
+  bumplets_width *= bumplets_width;
+  for (int i = 0; i < 256; ++i) {
+    int16_t x = (i - 128) << 8;
+    int16_t x_skew = i * i - 32768;
+    x = stmlib::Mix(x, x_skew, skew << 11);
+    int16_t sigmoid = x * (8192 + (sigmoid_strength << 10)) /
+        (8192 + (sigmoid_strength * abs(x) >> 5));
+    int16_t bumplets = braids::wav_sine[(i * bumplets_frequency) & 255];
+    uint16_t bumplet_gain = x * x / (bumplets_width) + 16;
+    bumplet_gain = 32768 * 128 / (128 + bumplet_gain);
+    s_dist_ws_[i] = stmlib::Mix(sigmoid, bumplets, bumplet_gain);
+  }
+  s_dist_ws_[256] = s_dist_ws_[255];
+  s_dist_ws_built_ = true;
+}
+
 void Part::Init(uint16_t* reverb_buffer) {
+  if (!s_dist_ws_built_) {
+    BuildDistShapeTable();
+  }
   active_voice_ = 0;
   
   fill(&note_[0], &note_[kMaxPolyphony], 0.0f);
@@ -542,7 +594,67 @@ void Part::Process(
       }
     }
   }
-  
+
+  // Simple stereo distortion stage (TBD) — the same four characters as the
+  // Elements stage (see elements/dsp/part.cc for the full curves), applied
+  // to the resonator pair before the STRING_AND_REVERB model's reverb:
+  //   0 tube: SoftClip(k*x)/SoftClip(k) — punch-preserving glue.
+  //   1 fold: Fold_do(x, d) — Retroactor's Vult/Befaco wavefolder.
+  //   2 fuzz: biased (SoftClip(k*x+b) - SoftClip(b)) / (1 + SoftClip(b)).
+  //   3 shape: TBD03's seeded braids waveshaper (s_dist_ws_, Drive as
+  //     pre-gain into the curve).
+  // Then a 1-pole tone LP and a dry/wet blend, same curve on both
+  // channels. drive 0 = zero-cost bypass. Renders on the audio core here
+  // (TBDings has no helper) — a few us per block.
+  if (patch.dist_drive > 0.0f) {
+    const float d = patch.dist_drive;
+    const float mix = patch.dist_mix;
+    const float lp_k = 0.04f + 0.96f * patch.dist_tone;
+    const int type = static_cast<int>(patch.dist_type + 0.5f) % 4;
+    float k = 0.0f, k_norm = 1.0f;
+    float bias = 0.0f, bias_sub = 0.0f, bias_norm = 1.0f;
+    float ws_gain = 1.0f;
+    if (type == 0) {
+      k = 1.0f + 9.0f * d * d;
+      k_norm = 1.0f / SoftClip(k);
+    } else if (type == 2) {
+      k = 1.0f + 9.0f * d * d;
+      bias = patch.dist_bias;
+      const float s_b = SoftClip(bias);
+      bias_sub = s_b;
+      bias_norm = 1.0f / (1.0f + s_b);
+    } else if (type == 3) {
+      ws_gain = 1.0f + 7.0f * d;
+    }
+    float* chans[2] = { out, aux };
+    for (size_t c = 0; c < 2; ++c) {
+      float lp = dist_lp_[c];
+      for (size_t i = 0; i < size; ++i) {
+        const float dry = chans[c][i];
+        float wet;
+        if (type == 1) {
+          wet = Fold_do(dry, d);
+        } else if (type == 2) {
+          wet = (SoftClip(k * dry + bias) - bias_sub) * bias_norm;
+        } else if (type == 3) {
+          float xg = dry * ws_gain;
+          if (xg > 1.0f) xg = 1.0f; else if (xg < -1.0f) xg = -1.0f;
+          const uint16_t idx = static_cast<uint16_t>(
+              static_cast<int16_t>(xg * 32767.0f) + 32768);
+          const int32_t a = s_dist_ws_[idx >> 8];
+          const int32_t b = s_dist_ws_[(idx >> 8) + 1];
+          wet = static_cast<float>(a + ((b - a) * (idx & 0xff) >> 8)) *
+              (1.0f / 32768.0f);
+        } else {
+          wet = SoftClip(k * dry) * k_norm;
+        }
+        lp += lp_k * (wet - lp);
+        chans[c][i] = dry + (lp - dry) * mix;
+      }
+      dist_lp_[c] = lp;
+    }
+  }
+
   if (model_ == RESONATOR_MODEL_STRING_AND_REVERB) {
     for (size_t i = 0; i < size; ++i) {
       float l = out[i];

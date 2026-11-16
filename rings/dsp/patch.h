@@ -36,6 +36,16 @@ struct Patch {
   float brightness {0.0f};
   float damping {0.0f};
   float position {0.0f};
+
+  // TBD: simple stereo distortion stage, the same four characters as the
+  // Elements stage (0 = tube SoftClip knee, 1 = Befaco/Vult fold,
+  // 2 = biased asymmetric fuzz, 3 = TBD03's seeded waveshaper); drive 0 =
+  // zero-cost bypass. CV-capable via the wrapper mapping.
+  float dist_type {0.0f};
+  float dist_drive {0.0f};
+  float dist_bias {0.0f};
+  float dist_tone {1.0f};
+  float dist_mix {1.0f};
 };
 
 }  // namespace rings
