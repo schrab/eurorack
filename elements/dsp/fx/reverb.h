@@ -30,6 +30,7 @@
 #define ELEMENTS_DSP_FX_REVERB_H_
 
 #include "stmlib/stmlib.h"
+#include "stmlib/dsp/dsp.h"
 
 #include "elements/dsp/fx/fx_engine.h"
 
@@ -80,6 +81,16 @@ class Reverb {
     const float krt = reverb_time_;
     const float amount = amount_;
     const float gain = input_gain_;
+    // TBD: dry-preserving send scale. Upstream crossfades the wash in
+    // (out = dry + (wet - dry) * amount), pulling the dry resonator down
+    // -6 dB at full Space — on this instrument that reads as "the input
+    // drops out" under the wash. Instead the wash is ADDED on top of an
+    // untouched dry signal, soft-bounded (SoftClip) so the near-critical
+    // high-time loop (krt 0.95 with 2.0 loop writes) cannot spike the sum
+    // past the codec's hard clip — that overrange spike was the click at
+    // high Space. 0.6 keeps the worst-case sum (dry ~1.0 post-mixdown
+    // SoftLimit + send 0.3 at amount 0.5) inside the codec headroom.
+    const float send = amount * 0.6f;
 
     float lp_1 = lp_decay_1_;
     float lp_2 = lp_decay_2_;
@@ -117,7 +128,7 @@ class Reverb {
       c.Write(del1, 2.0f);
       c.Write(wet, 0.0f);
 
-      *left += (wet - *left) * amount;
+      *left += stmlib::SoftClip(wet) * send;
 
       c.Load(apout);
       // c.Interpolate(del1, 4450.0f, LFO_1, 50.0f, krt);
@@ -130,8 +141,8 @@ class Reverb {
       c.Write(del2, 2.0f);
       c.Write(wet, 0.0f);
 
-      *right += (wet - *right) * amount;
-      
+      *right += stmlib::SoftClip(wet) * send;
+
       ++left;
       ++right;
     }
