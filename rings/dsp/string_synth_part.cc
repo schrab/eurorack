@@ -42,6 +42,8 @@ void StringSynthPart::Init(uint16_t* reverb_buffer) {
   polyphony_ = 1;
   fx_type_ = FX_ENSEMBLE;
 
+  dist_.Init();
+
   for (int32_t i = 0; i < kStringSynthVoices; ++i) {
     voice_[i].Init();
   }
@@ -386,6 +388,14 @@ void StringSynthPart::Process(
     }
   }
   
+  // TBD guitar distortion stage on the chord mix — chords -> drive -> FX
+  // (reverb/chorus), the guitar order. Same four characters and sustainer
+  // as the Part/Elements stages (tbd_guitar_dist.h, seed 0xcafe curve).
+  dist_.Process(out, aux, size,
+                static_cast<int>(patch.dist_type + 0.5f),
+                patch.dist_drive, patch.dist_bias, patch.dist_tone,
+                patch.dist_mix, patch.dist_sustain);
+
   if (clear_fx_) {
     reverb_.Clear();
     clear_fx_ = false;

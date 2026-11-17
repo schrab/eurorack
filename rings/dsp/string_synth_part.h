@@ -44,6 +44,10 @@
 #include "rings/dsp/string_synth_envelope.h"
 #include "rings/dsp/string_synth_voice.h"
 
+// TBD guitar distortion stage (TBD-owned helper, same math as the Part /
+// Elements stages) — runs on the chord mix before the FX section.
+#include "helpers/tbd_guitar_dist.h"
+
 namespace rings {
 
 const int32_t kMaxStringSynthPolyphony = 4;
@@ -84,6 +88,8 @@ class StringSynthPart {
       float* aux,
       size_t size);
 
+  inline int32_t polyphony() const { return polyphony_; }
+
   inline void set_polyphony(int32_t polyphony) {
     int32_t old_polyphony = polyphony_;
     polyphony_ = std::min(polyphony, kMaxStringSynthPolyphony);
@@ -117,6 +123,9 @@ class StringSynthPart {
   Reverb reverb_;
   Chorus chorus_;
   Limiter limiter_;
+
+  // chords -> TBD distortion -> FX (reverb/chorus) — the guitar order
+  tbd::GuitarDist dist_;
 
   int32_t num_voices_;
   int32_t active_group_;
