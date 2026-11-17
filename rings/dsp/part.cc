@@ -28,6 +28,8 @@
 
 #include "rings/dsp/part.h"
 
+#include "helpers/tbd_dist_fast.h"
+
 #include "stmlib/dsp/dsp.h"
 #include "stmlib/dsp/units.h"
 #include "stmlib/utils/dsp.h"
@@ -622,11 +624,11 @@ void Part::Process(
     float ws_gain = 1.0f;
     if (type == 0) {
       k = 1.0f + 9.0f * d * d;
-      k_norm = 1.0f / SoftClip(k);
+      k_norm = tbd::distfast::FastRecip(tbd::distfast::FastSoftClip(k));
     } else if (type == 2) {
       k = 1.0f + 9.0f * d * d;
       bias = patch.dist_bias;
-      const float s_b = SoftClip(bias);
+      const float s_b = tbd::distfast::FastSoftClip(bias);
       bias_sub = s_b;
       bias_norm = 1.0f / (1.0f + s_b);
     } else if (type == 3) {
@@ -650,7 +652,7 @@ void Part::Process(
         if (type == 1) {
           wet = Fold_do(dry, d);
         } else if (type == 2) {
-          wet = (SoftClip(k * dry + bias) - bias_sub) * bias_norm;
+          wet = (tbd::distfast::FastSoftClip(k * dry + bias) - bias_sub) * bias_norm;
         } else if (type == 3) {
           float xg = dry * ws_gain;
           if (xg > 1.0f) xg = 1.0f; else if (xg < -1.0f) xg = -1.0f;
@@ -661,12 +663,12 @@ void Part::Process(
           wet = static_cast<float>(a + ((b - a) * (idx & 0xff) >> 8)) *
               (1.0f / 32768.0f);
         } else {
-          wet = SoftClip(k * dry) * k_norm;
+          wet = tbd::distfast::FastSoftClip(k * dry) * k_norm;
         }
         if (sustain_on) {
           const float x = fabsf(wet);
           env += (x > env ? 0.5f : 0.000125f) * (x - env);
-          float g = 0.5f / (env > 0.002f ? env : 0.002f);
+          float g = 0.5f * tbd::distfast::FastRecip(env > 0.002f ? env : 0.002f);
           if (g > sus_max) g = sus_max;
           wet *= g;
         }
