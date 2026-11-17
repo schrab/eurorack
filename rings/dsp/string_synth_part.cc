@@ -123,6 +123,13 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { -12.0f, -5.0f,   0.0f,  4.0f,  11.0f,  14.0f,  19.0f, 24.0f }, // M9
     { -12.0f, -5.0f,   0.0f,  4.0f,   7.0f,  11.0f,  19.0f, 24.0f }, // M7
     { -12.0f, -5.0f,   0.0f,  4.0f,   7.0f,  12.0f,  19.0f, 24.0f }, // M
+    // TBD VARG block-chord qualities (doc: Black Metal Chords, Scales,...)
+    { -12.0f,  0.0f,  6.0f, 12.0f,  18.0f,  24.0f,  30.0f, 36.0f }, // 11 5b5
+    { -12.0f,  0.0f,  3.0f,  6.0f,   9.0f,  12.0f,  15.0f, 18.0f }, // 12 dim7
+    { -12.0f,  0.0f,  3.0f,  6.0f,  10.0f,  12.0f,  15.0f, 18.0f }, // 13 m7b5
+    { -12.0f,  0.0f,  4.0f,  8.0f,  12.0f,  16.0f,  20.0f, 24.0f }, // 14 aug
+    { -12.0f,  0.0f,  3.0f,  7.0f,  14.0f,  12.0f,  15.0f, 19.0f }, // 15 add9
+    { -12.0f,  0.0f,  1.0f,  7.0f,  12.0f,  13.0f,  19.0f, 24.0f }, // 16 m+b9
   },
   {
     { -12.0f, -0.01f,  0.0f,  0.01f, 12.0f,  12.01f }, // OCT
@@ -136,6 +143,12 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { -12.0f, -5.0f,   0.0f,  4.0f,  11.0f,  14.0f  }, // M9
     { -12.0f, -5.0f,   0.0f,  4.0f,   7.0f,  11.0f  }, // M7
     { -12.0f, -5.0f,   0.0f,  4.0f,   7.0f,  12.0f  }, // M
+    { -12.0f,  0.0f,  6.0f, 12.0f,  18.0f,  24.0f  }, // 11 5b5
+    { -12.0f,  0.0f,  3.0f,  6.0f,   9.0f,  12.0f  }, // 12 dim7
+    { -12.0f,  0.0f,  3.0f,  6.0f,  10.0f,  12.0f  }, // 13 m7b5
+    { -12.0f,  0.0f,  4.0f,  8.0f,  12.0f,  16.0f  }, // 14 aug
+    { -12.0f,  0.0f,  3.0f,  7.0f,  14.0f,  12.0f  }, // 15 add9
+    { -12.0f,  0.0f,  1.0f,  7.0f,  12.0f,  13.0f  }, // 16 m+b9
   },
   {
     { -12.0f, 0.0f,  0.01f, 12.0f }, // OCT
@@ -149,6 +162,12 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { -12.0f, 4.0f, 11.0f,  14.0f }, // M9
     { -12.0f, 4.0f,  7.0f,  11.0f }, // M7
     { -12.0f, 4.0f,  7.0f,  12.0f }, // M
+    { -12.0f, 0.0f,  6.0f,  12.0f }, // 11 5b5
+    { -12.0f, 0.0f,  3.0f,   6.0f }, // 12 dim7
+    { -12.0f, 0.0f,  3.0f,   6.0f }, // 13 m7b5
+    { -12.0f, 0.0f,  4.0f,   8.0f }, // 14 aug
+    { -12.0f, 0.0f,  3.0f,   7.0f }, // 15 add9
+    { -12.0f, 0.0f,  1.0f,   7.0f }, // 16 m+b9
   },
   {
     { 0.0f,  0.01f, 12.0f }, // OCT
@@ -162,8 +181,30 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { 4.0f, 11.0f,  14.0f }, // M9
     { 4.0f,  7.0f,  11.0f }, // M7
     { 4.0f,  7.0f,  12.0f }, // M
+    { 0.0f,  6.0f,  12.0f }, // 11 5b5
+    { 0.0f,  3.0f,   6.0f }, // 12 dim7
+    { 0.0f,  3.0f,   6.0f }, // 13 m7b5
+    { 0.0f,  4.0f,   8.0f }, // 14 aug
+    { 0.0f,  3.0f,   7.0f }, // 15 add9
+    { 0.0f,  1.0f,   7.0f }, // 16 m+b9
   }
 };
+
+// Host-test / bench seam: the chord table is file-local const, so expose a
+// read-only view. No runtime state, no allocation.
+const float *ChordVoicing(int polyphony, int chord) {
+    if (polyphony < 1) polyphony = 1;
+    if (polyphony > kMaxStringSynthPolyphony) polyphony = kMaxStringSynthPolyphony;
+    if (chord < 0) chord = 0;
+    if (chord >= kNumChords) chord = kNumChords - 1;
+    return chords[polyphony - 1][chord];
+}
+int ChordSize(int polyphony) {
+    if (polyphony < 1) polyphony = 1;
+    if (polyphony > kMaxStringSynthPolyphony) polyphony = kMaxStringSynthPolyphony;
+    const int n = kStringSynthVoices / polyphony;
+    return n < kMaxChordSize ? n : kMaxChordSize;
+}
 
 #else
 

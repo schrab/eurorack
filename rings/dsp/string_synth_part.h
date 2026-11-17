@@ -56,6 +56,10 @@ const int32_t kMaxChordSize = 8;
 const int32_t kNumHarmonics = 3;
 const int32_t kNumFormants = 3;
 
+// Read-only view of the file-local guitar chord table (host tests + bench).
+const float *ChordVoicing(int polyphony, int chord);
+int ChordSize(int polyphony);
+
 enum FxType {
   FX_FORMANT,
   FX_CHORUS,
