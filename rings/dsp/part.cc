@@ -107,6 +107,7 @@ void Part::Init(uint16_t* reverb_buffer) {
   
   reverb_.Init(reverb_buffer);
   limiter_.Init();
+  dist_chainsaw_.Init(32000.0f);
 
   note_filter_.Init(
       kSampleRate / kMaxBlockSize,
@@ -609,8 +610,13 @@ void Part::Process(
   if (patch.dist_drive > 0.0f) {
     const float d = patch.dist_drive;
     const float mix = patch.dist_mix;
+    const int type = static_cast<int>(patch.dist_type + 0.5f) % 5;
+    if (type == 4) {
+      tbd::ChainsawStage(out, aux, size, dist_chainsaw_, d, patch.dist_bias,
+                         patch.dist_tone, mix, patch.dist_sustain,
+                         dist_lp_, dist_env_);
+    } else {
     const float lp_k = 0.04f + 0.96f * patch.dist_tone;
-    const int type = static_cast<int>(patch.dist_type + 0.5f) % 4;
     float k = 0.0f, k_norm = 1.0f;
     float bias = 0.0f, bias_sub = 0.0f, bias_norm = 1.0f;
     float ws_gain = 1.0f;
@@ -669,6 +675,7 @@ void Part::Process(
       }
       dist_lp_[c] = lp;
       dist_env_[c] = env;
+    }
     }
   } else {
     dist_env_[0] *= 0.995f;

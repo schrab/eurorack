@@ -36,6 +36,7 @@
 #include "elements/dsp/patch.h"
 #include "elements/dsp/voice.h"
 #include "warps/dsp/modulator.h"
+#include "helpers/tbd_chainsaw_dist.h"
 
 namespace elements {
 
@@ -126,6 +127,7 @@ class Part {
   warps::Modulator* warps_;
 
   // Simple distortion stage: one 1-pole tone state per output channel.
+  tbd::ChainsawDist dist_chainsaw_;
   float dist_lp_[2];
 
   // Sustainer AGC: one envelope state per output channel.

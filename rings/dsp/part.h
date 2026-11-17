@@ -36,6 +36,7 @@
 #include "stmlib/dsp/delay_line.h"
 
 #include "rings/dsp/dsp.h"
+#include "helpers/tbd_chainsaw_dist.h"
 #include "rings/dsp/fm_voice.h"
 #include "rings/dsp/fx/reverb.h"
 #include "rings/dsp/limiter.h"
@@ -182,6 +183,7 @@ class Part {
   float aux_buffer_[kMaxBlockSize];
 
   // TBD distortion stage: one 1-pole tone state per output channel.
+  tbd::ChainsawDist dist_chainsaw_;
   float dist_lp_[2];
 
   // Sustainer AGC: one envelope state per output channel.

@@ -96,6 +96,7 @@ void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
   patch_.dist_mix = 1.0f;
   dist_lp_[0] = dist_lp_[1] = 0.0f;
   dist_env_[0] = dist_env_[1] = 0.0f;
+  dist_chainsaw_.Init(32000.0f);
   // Type 3 transfer table: braids SignatureWaveshaper::Init verbatim
   // (int16/int32 semantics included — the uint16 bumplet_gain wrap at the
   // extremes is part of the curve), seeded 0xcafe = the exact curve TBD03
@@ -384,8 +385,13 @@ void Part::Process(
   if (patch_.dist_drive > 0.0f) {
     const float d = patch_.dist_drive;
     const float mix = patch_.dist_mix;
+    const int type = static_cast<int>(patch_.dist_type + 0.5f) % 5;
+    if (type == 4) {
+      tbd::ChainsawStage(main, aux, size, dist_chainsaw_, d, patch_.dist_bias,
+                         patch_.dist_tone, mix, patch_.dist_sustain,
+                         dist_lp_, dist_env_);
+    } else {
     const float lp_k = 0.04f + 0.96f * patch_.dist_tone;
-    const int type = static_cast<int>(patch_.dist_type + 0.5f) % 4;
     float k = 0.0f, k_norm = 1.0f;
     float bias = 0.0f, bias_sub = 0.0f, bias_norm = 1.0f;
     float ws_gain = 1.0f;
@@ -450,6 +456,7 @@ void Part::Process(
       }
       dist_lp_[c] = lp;
       dist_env_[c] = env;
+    }
     }
   } else {
     dist_env_[0] *= 0.995f;
