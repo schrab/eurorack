@@ -640,11 +640,6 @@ void Part::Process(
     // fixed 0.5 target; fast attack ducks new strikes, ~250 ms release.
     const float sus_max = 1.0f + 15.0f * patch.dist_sustain * patch.dist_sustain;
     const bool sustain_on = sus_max > 1.001f;
-    // The string-noise models (sympathetic/quantized/string+reverb) excite
-    // with a full-scale noise burst; at high Drive it hard-clips into a
-    // per-note click. Scale only the signal INTO the shaper — the dry blend
-    // below still uses the original `dry`, so clean level is unchanged.
-    const float inTrim = tbd::distfast::ModelDistTrim(model_);
     float* chans[2] = { out, aux };
     for (size_t c = 0; c < 2; ++c) {
       float lp = dist_lp_[c];
@@ -654,14 +649,13 @@ void Part::Process(
       }
       for (size_t i = 0; i < size; ++i) {
         const float dry = chans[c][i];
-        const float sd = dry * inTrim;
         float wet;
         if (type == 1) {
-          wet = Fold_do(sd, d);
+          wet = Fold_do(dry, d);
         } else if (type == 2) {
-          wet = (tbd::distfast::FastSoftClip(k * sd + bias) - bias_sub) * bias_norm;
+          wet = (tbd::distfast::FastSoftClip(k * dry + bias) - bias_sub) * bias_norm;
         } else if (type == 3) {
-          float xg = sd * ws_gain;
+          float xg = dry * ws_gain;
           if (xg > 1.0f) xg = 1.0f; else if (xg < -1.0f) xg = -1.0f;
           const uint16_t idx = static_cast<uint16_t>(
               static_cast<int16_t>(xg * 32767.0f) + 32768);
@@ -670,7 +664,7 @@ void Part::Process(
           wet = static_cast<float>(a + ((b - a) * (idx & 0xff) >> 8)) *
               (1.0f / 32768.0f);
         } else {
-          wet = tbd::distfast::FastSoftClip(k * sd) * k_norm;
+          wet = tbd::distfast::FastSoftClip(k * dry) * k_norm;
         }
         if (sustain_on) {
           const float x = fabsf(wet);
