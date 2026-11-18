@@ -51,6 +51,7 @@ void StringSynthPart::Init(uint16_t* reverb_buffer) {
   for (int32_t i = 0; i < kMaxStringSynthPolyphony; ++i) {
     group_[i].tonic = 0.0f;
     group_[i].envelope.Init();
+    restrum_release_[i] = 0;
   }
   
   for (int32_t i = 0; i < kNumFormants; ++i) {
@@ -130,6 +131,7 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { -12.0f,  0.0f,  4.0f,  8.0f,  12.0f,  16.0f,  20.0f, 24.0f }, // 14 aug
     { -12.0f,  0.0f,  3.0f,  7.0f,  14.0f,  12.0f,  15.0f, 19.0f }, // 15 add9
     { -12.0f,  0.0f,  1.0f,  7.0f,  12.0f,  13.0f,  19.0f, 24.0f }, // 16 m+b9
+    { -12.0f,  0.0f,  7.0f, 12.0f,  19.0f,  24.0f,  12.0f, 24.0f }, // 17 1-5-1 power
   },
   {
     { -12.0f, -0.01f,  0.0f,  0.01f, 12.0f,  12.01f }, // OCT
@@ -149,6 +151,7 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { -12.0f,  0.0f,  4.0f,  8.0f,  12.0f,  16.0f  }, // 14 aug
     { -12.0f,  0.0f,  3.0f,  7.0f,  14.0f,  12.0f  }, // 15 add9
     { -12.0f,  0.0f,  1.0f,  7.0f,  12.0f,  13.0f  }, // 16 m+b9
+    { -12.0f,  0.0f,  7.0f, 12.0f,  19.0f,  24.0f  }, // 17 1-5-1 power
   },
   {
     { -12.0f, 0.0f,  0.01f, 12.0f }, // OCT
@@ -168,6 +171,7 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { -12.0f, 0.0f,  4.0f,   8.0f }, // 14 aug
     { -12.0f, 0.0f,  3.0f,   7.0f }, // 15 add9
     { -12.0f, 0.0f,  1.0f,   7.0f }, // 16 m+b9
+    { -12.0f, 0.0f,  7.0f,  12.0f }, // 17 1-5-1 power
   },
   {
     { 0.0f,  0.01f, 12.0f }, // OCT
@@ -187,6 +191,7 @@ const float chords[kMaxStringSynthPolyphony][kNumChords][kMaxChordSize] = {
     { 0.0f,  4.0f,   8.0f }, // 14 aug
     { 0.0f,  3.0f,   7.0f }, // 15 add9
     { 0.0f,  1.0f,   7.0f }, // 16 m+b9
+    { 0.0f,  7.0f,  12.0f }, // 17 1-5-1 power
   }
 };
 
@@ -288,12 +293,20 @@ void StringSynthPart::ProcessEnvelopes(
   float decay_time = SemitonesToRatio(decay * 84.0f) * 0.180f * period;
   float attack_rate = 1.0f / attack_time;
   float decay_rate = 1.0f / decay_time;
-  
+  // 25 ms duck for the chord just left by a strum — long enough to avoid an
+  // amplitude click, short enough to separate consecutive rhythm hits.
+  const float restrum_rate = 1.0f / (0.025f * period);
+
   for (int32_t i = 0; i < polyphony_; ++i) {
     float drone = shape < 0.98f ? 0.0f : (shape - 0.98f) * 55.0f;
     if (drone >= 1.0f) drone = 1.0f;
 
-    group_[i].envelope.set_ad(attack_rate, decay_rate);
+    float group_decay_rate = decay_rate;
+    if (restrum_release_[i] > 0) {
+      --restrum_release_[i];
+      group_decay_rate = restrum_rate;
+    }
+    group_[i].envelope.set_ad(attack_rate, group_decay_rate);
     float value = group_[i].envelope.Process(flags[i]);
     values[i] = value + (1.0f - value) * drone;
   }
@@ -362,6 +375,11 @@ void StringSynthPart::Process(
   if (performance_state.strum) {
     group_[active_group_].tonic = note_filter_.stable_note();
     envelope_flags[active_group_] = ENVELOPE_FLAG_FALLING_EDGE;
+    // Duck the previous chord quickly: set_ad() gives FALLING_EDGE no effect
+    // (sustain_point_ = 0), so without this every strum sits on top of a
+    // seconds-long tail and the rhythm pattern is inaudible.
+    group_[active_group_].envelope.ForceRelease();
+    restrum_release_[active_group_] = 32;   // ~23 ms at 1378 blocks/s
     active_group_ = (active_group_ + 1) % polyphony_;
     envelope_flags[active_group_] = ENVELOPE_FLAG_RISING_EDGE;
     acquisition_delay_ = 3;

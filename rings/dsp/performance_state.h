@@ -31,7 +31,7 @@
 
 namespace rings {
 
-const int32_t kNumChords = 17;   // 11 original guitar voicings + 6 VARG block shapes
+const int32_t kNumChords = 18;   // 11 original guitar voicings + 6 VARG shapes + 1-5-1 power
 
 struct PerformanceState {
   bool strum {false};
