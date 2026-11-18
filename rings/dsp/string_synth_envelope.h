@@ -93,19 +93,6 @@ class StringSynthEnvelope {
     return value_;
   }
 
-  // Jump straight into the decay segment from the current value. With set_ad
-  // sustain_point_ is 0, so ENVELOPE_FLAG_FALLING_EDGE alone does nothing —
-  // the previous chord would ring at its full (multi-second) decay and blend
-  // successive strums into one sustained bed. The caller also supplies a fast
-  // decay rate for the next few blocks, making each rhythm hit audible.
-  inline void ForceRelease() {
-    if (segment_ < num_segments_) {
-      start_value_ = value_;
-      segment_ = num_segments_ - 1;
-      phase_ = 0.0f;
-    }
-  }
-
   inline void set_ad(float attack, float decay) {
     num_segments_ = 2;
     sustain_point_ = 0;

@@ -137,9 +137,6 @@ class StringSynthPart {
   int32_t polyphony_;
   int32_t acquisition_delay_;
 
-  // Per-group short-release countdown after a strum (see ForceRelease).
-  int32_t restrum_release_[kMaxStringSynthPolyphony];
-
   FxType fx_type_;
   
   NoteFilter note_filter_;
