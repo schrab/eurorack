@@ -610,10 +610,11 @@ void Part::Process(
   // channels. drive 0 OR mix 0 = zero-cost bypass: with mix 0 the wet path
   // is inaudible, so running the shaper + sustainer only burns ~26k cycles
   // and can push the audio task over its budget (audible crackle).
-  if (patch.dist_drive > 0.0f && patch.dist_mix > 0.0f) {
+  const int distType0 = static_cast<int>(patch.dist_type + 0.5f);
+  if (distType0 > 0 && patch.dist_drive > 0.0f && patch.dist_mix > 0.0f) {
     const float d = patch.dist_drive;
     const float mix = patch.dist_mix;
-    const int type = static_cast<int>(patch.dist_type + 0.5f) % 5;
+    const int type = (distType0 - 1) % 5;   // wrapper: 1 Tube .. 5 Chainsaw
     if (type == 4) {
       tbd::ChainsawStage(out, aux, size, dist_chainsaw_, d, patch.dist_bias,
                          patch.dist_tone, mix, patch.dist_sustain,

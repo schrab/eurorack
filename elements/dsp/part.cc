@@ -383,10 +383,11 @@ void Part::Process(
   // keeps measuring the pre-drive resonator level) and every wet path is
   // bounded, so the reverb can never be overdriven by this stage.
   // drive 0 = zero-cost bypass.
-  if (patch_.dist_drive > 0.0f) {
+  const int distType0 = static_cast<int>(patch_.dist_type + 0.5f);
+  if (distType0 > 0 && patch_.dist_drive > 0.0f && patch_.dist_mix > 0.0f) {
     const float d = patch_.dist_drive;
     const float mix = patch_.dist_mix;
-    const int type = static_cast<int>(patch_.dist_type + 0.5f) % 5;
+    const int type = (distType0 - 1) % 5;   // wrapper: 1 Tube .. 5 Chainsaw
     if (type == 4) {
       tbd::ChainsawStage(main, aux, size, dist_chainsaw_, d, patch_.dist_bias,
                          patch_.dist_tone, mix, patch_.dist_sustain,
