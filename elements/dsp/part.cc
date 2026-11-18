@@ -64,7 +64,7 @@ namespace elements {
 using namespace std;
 using namespace stmlib;
 
-void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
+void Part::Init(uint16_t* reverb_buffer) {
   patch_.exciter_envelope_shape = 1.0f;
   patch_.exciter_bow_level = 0.0f;
   patch_.exciter_bow_timbre = 0.5f;
@@ -84,11 +84,6 @@ void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
   patch_.reverb_diffusion = 0.625f;
   patch_.reverb_lp = 0.7f;
   patch_.space = 0.5f;
-  patch_.warps_algorithm = 0.0f;
-  patch_.warps_timbre = 0.5f;
-  patch_.warps_mod_level = 0.5f;
-  patch_.warps_carrier_level = 0.5f;
-  patch_.warps_mix = 0.0f;
   patch_.dist_type = 0.0f;
   patch_.dist_drive = 0.0f;
   patch_.dist_bias = 0.0f;
@@ -141,10 +136,6 @@ void Part::Init(uint16_t* reverb_buffer, warps::Modulator* warps) {
   }
   
   reverb_.Init(reverb_buffer);
-
-  // warps is initialized by the embedder (it owns the external vocoder
-  // storage too) — borrowed here, never Init'ed from inside Part.
-  warps_ = warps;
 
   scaled_exciter_level_ = 0.0f;
   scaled_resonator_level_ = 0.0f;
@@ -326,41 +317,6 @@ void Part::Process(
 
   resonator_level *= 16.0f;
   scaled_resonator_level_ = resonator_level < 1.0f ? resonator_level : 1.0f;
-
-  // Warps cross-modulation stage (TBD): carrier = resonator mono sum,
-  // modulator = raw exciter (the canonical Elements->Warps patch). Sits
-  // after the metering/panic block so the panic guard keeps measuring the
-  // pre-Warps resonator level, and before the reverb ("after resonator,
-  // before reverb"). warps_algorithm == 0 = zero-cost bypass. Algorithm
-  // and timbre are the engine's normalized 0..1 scales (knob zones =
-  // algorithm * 8; vocoder engages above 0.725); the two levels map onto
-  // the engine's channel_drive gain pots where 0.5 is near-unity and the
-  // saturator provides the overdrive.
-  if (warps_ != nullptr && patch_.warps_algorithm > 0.0f) {
-    warps::ShortFrame warps_in[kMaxBlockSize];
-    warps::ShortFrame warps_out[kMaxBlockSize];
-    for (size_t i = 0; i < size; ++i) {
-      float c = 0.5f * (main[i] + aux[i]);
-      float m = raw_buffer_[i];
-      warps_in[i].l = static_cast<short>(
-          c > 1.0f ? 32767 : (c < -1.0f ? -32767 : c * 32767.0f));
-      warps_in[i].r = static_cast<short>(
-          m > 1.0f ? 32767 : (m < -1.0f ? -32767 : m * 32767.0f));
-    }
-    warps::Parameters* wp = warps_->mutable_parameters();
-    wp->modulation_algorithm = patch_.warps_algorithm;
-    wp->modulation_parameter = patch_.warps_timbre;
-    wp->channel_drive[0] = patch_.warps_carrier_level;
-    wp->channel_drive[1] = patch_.warps_mod_level;
-    wp->carrier_shape = 0;
-    warps_->Process(warps_in, warps_out, size);
-    float mix = patch_.warps_mix;
-    for (size_t i = 0; i < size; ++i) {
-      float w = static_cast<float>(warps_out[i].l) * (1.0f / 32768.0f);
-      main[i] += (w - main[i]) * mix;
-      aux[i] += (w - aux[i]) * mix;
-    }
-  }
 
   // Simple stereo distortion stage (TBD), four characters on one Type
   // selector — same curve on both channels, followed by a 1-pole tone LP
