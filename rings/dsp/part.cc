@@ -607,9 +607,10 @@ void Part::Process(
   //   3 shape: TBD03's seeded braids waveshaper (s_dist_ws_, Drive as
   //     pre-gain into the curve).
   // Then a 1-pole tone LP and a dry/wet blend, same curve on both
-  // channels. drive 0 = zero-cost bypass. Renders on the audio core here
-  // (TBDings has no helper) — a few us per block.
-  if (patch.dist_drive > 0.0f) {
+  // channels. drive 0 OR mix 0 = zero-cost bypass: with mix 0 the wet path
+  // is inaudible, so running the shaper + sustainer only burns ~26k cycles
+  // and can push the audio task over its budget (audible crackle).
+  if (patch.dist_drive > 0.0f && patch.dist_mix > 0.0f) {
     const float d = patch.dist_drive;
     const float mix = patch.dist_mix;
     const int type = static_cast<int>(patch.dist_type + 0.5f) % 5;
